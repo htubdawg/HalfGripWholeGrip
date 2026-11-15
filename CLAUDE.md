@@ -123,10 +123,10 @@ Repos side by side: `HalfGripRefs` (`/home/user/HalfGripRefs`), HalfGripTools (c
   right hand while the left steers; SlapPack parts with the right hand. Send the log.
 - **Open questions:** does Unity re-register mice during a race (log `keeps taking the mice back`)? Is Unity's mouse back in the
   menus after every give-back (it should be: same window and flags restored)? Should the left hand be allowed more parts?
-- **PR:** [htubdawg/HalfGripWholeGrip#2](https://github.com/htubdawg/HalfGripWholeGrip/pull/2) (`claude/jolly-ritchie-e6wh7t` → `main`),
-  open. Before pushing more to that branch, check it is still open; if merged, start a new branch from `main`. 0.3.1 is on
-  `claude/vibrant-mendel-fshbj5` (0.3.0 + the fix), no PR of its own yet: owner to say whether to open one or fold it into #2.
-- **Told the owner, awaiting answers:** asked whether to watch the PR (no answer yet). Owner asked about SlapPack's Grabber patches;
+- **PR:** [htubdawg/HalfGripWholeGrip#3](https://github.com/htubdawg/HalfGripWholeGrip/pull/3) (`claude/vibrant-mendel-fshbj5` → `main`,
+  0.3.1, contains Codex's and 0.3.0's history), open. #1 (Codex) and #2 (0.3.0) closed as superseded at the owner's request; their
+  branches are left on the remote. Before pushing more, check #3 is still open; if merged, restart the branch from `main`.
+- **Told the owner, awaiting answers:** asked whether to watch #3. Owner asked about SlapPack's Grabber patches;
   answered (see *Game and Windows facts*): harmless to other mods, the transpiler is justified, only 0.2.0's Update replacement broke them.
 - **Session notes:** HalfGripTools built from source this session (clone to `/home/user/htubdawg/HalfGripTools`); jMods is
   read-only from here (public clone only), so its README/table can't be edited from this repo's sessions without push access.
