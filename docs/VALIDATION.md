@@ -19,13 +19,21 @@ The old reader validated every shared-window WM_INPUT against mouse-payload size
 
 Added passing regressions exercise the production decoder/accumulator with 500 frames of A holding/moving while B clicks and keyboard packets interleave, then 500 frames with the devices reversed and complete between-frame clicks. Keyboard/HID packets must not reset either mouse; actual truncated mouse packets are rejected. A separate check applies the production transpiler to the real reference assembly's hand-read call sites and verifies all seven receive the correct Grabber argument. This metadata check does not execute Unity or Windows detours. The test runner uses Mono.Cecil 0.11.4 for offline reference-assembly inspection; no additional dependency is shipped in the mod.
 
-**The updated 0.1.2 still needs a Windows retest.** No additional hotkeys, modes or setup steps were introduced.
+**0.1.2 subsequently failed to initialize in the user's Windows test; see the 0.1.3 record below.** No additional hotkeys, modes or setup steps were introduced.
+
+## 0.1.2 startup regression and 0.1.3 correction
+
+The next supplied Windows log reports `Failed to patch void Grabber::Update()` followed by `MissingMethodException: Grabber input call sites differ from the inspected build`, and the loader switches Whole Grip off. This confirms the strict transpiler introduced in 0.1.2 prevented the mod from loading. The log does not explain why its input call-site matching differed; it is not evidence that the user's game version is wrong. The prior offline check modeled call sites using reflection metadata from the reference DLL and did not exercise the user's live HarmonyX pipeline. It therefore failed to establish runtime compatibility.
+
+Version **0.1.3** removes that transpiler, its wrappers, and its offline binding check. It reinstates the prefix-based Grabber.Update installation that successfully loaded in the user's 0.1.1 run. Scoped button reads use the existing per-grabber input selector. The decoder/type-validation and WM_CAPTURECHANGED fixes remain. Production mixed-packet, simultaneous input, assignment, layout and concurrency checks still run; compilation remains against 0.419 references / loader 1.0.6.
+
+**0.1.3 still needs Windows validation.** Replace the mod folder and fully restart the game; no config edits or mod hotkeys are needed. The old failed transpiler must not remain in the running process. No changes to other repositories are part of this correction.
 
 ## Versions
 
 | Component | Inspected / compile checked | Windows runtime tested |
 | --- | --- | --- |
-| Game | HalfGripRefs labeled 0.419; assembly hash in INSPECTION.md | User log confirms 0.419 with 0.1.1; interaction failed; 0.1.2 pending |
+| Game | HalfGripRefs labeled 0.419; assembly hash in INSPECTION.md | User log confirms 0.419 with 0.1.1; interaction failed; 0.1.3 pending |
 | Unity | Reference README labels 6000.3.22f1 | User log confirms 6000.3.22f1 with 0.1.1 |
 | HalfGripTools | 1.0.6, commit d2c7a786b384566562cf6fcfbdb57eb36b16e351 | User log confirms 1.0.6.0 with 0.1.1 |
 | BepInEx | Reference set labeled 5.4.23.5 | Not tested |
@@ -34,9 +42,9 @@ Added passing regressions exercise the production decoder/accumulator with 500 f
 
 First use a clean vanilla game with only HalfGripTools and this mod enabled. Do not enable SlapPack or gun mods for this milestone. Record the installed game, Unity, loader, BepInEx versions and Raw Input receiver/registration mode from `BepInEx\LogOutput.log`.
 
-Every item below remains **pending for 0.1.2** until performed on Windows. Capture a short video of the two physical mice and cockpit together for the first playable milestone.
+Every item below remains **pending for 0.1.3** until performed on Windows. Capture a short video of the two physical mice and cockpit together for the first playable milestone.
 
-1. **Automatic assignment.** Replace the old mod with 0.1.2 and restart, leaving any old config in place. Navigate the menu with mouse A and start gameplay. A must become the blue R hand. Click mouse B in the cockpit; it must become orange L, with interaction immediately enabled. No function keys or config changes should be needed. Repeat with saved assignments and a different menu mouse.
+1. **Automatic assignment.** Replace the old mod with 0.1.3 and restart, leaving any old config in place. Navigate the menu with mouse A and start gameplay. A must become the blue R hand. Click mouse B in the cockpit; it must become orange L, with interaction immediately enabled. No function keys or config changes should be needed. Repeat with saved assignments and a different menu mouse.
 2. **Input visibility.** Move each mouse separately; verify its own colored hand and status reports input. If attachment fails, the status must show a reason and ordinary controls must remain available. Verify F7/F8/F9 and Shift+F8 retain their existing game/other-mod behavior.
 3. **Wheel plus shifter.** Hold/move the wheel with A while B independently grabs/moves the standard H-gate. Repeat with hands swapped, including simultaneous movement/clicks and rapid clicks entirely between rendered frames.
 4. **Release isolation.** Hold both objects. Release either mouse while the other continues moving/holding its object. Only the released hand may let go.

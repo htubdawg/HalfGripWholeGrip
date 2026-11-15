@@ -1,6 +1,6 @@
 # Inspection record
 
-Inspected on 2026-11-15. Menu use and ordinary clicks assign hands automatically; there are no mod hotkeys or mode switches. Version 0.1.2 additionally binds native hand reads directly to the Grabber instance, accepts non-mouse packets on the shared receiver without a mouse-size check, and preserves input across cursor-capture changes. Only HalfGripWholeGrip was changed. Other repositories were read-only; the compile checker builds an isolated loader copy under this repository's ignored `work/` folder.
+Inspected on 2026-11-15. Menu use and ordinary clicks assign hands automatically; there are no mod hotkeys or mode switches. Version 0.1.3 retains the non-mouse packet and cursor-capture reset fixes, and uses the prefix-based input hooks from 0.1.1. The strict transpiler added in 0.1.2 is removed because it rejected the user's running method and prevented initialization. Only HalfGripWholeGrip was changed. Other repositories were read-only; the compile checker builds an isolated loader copy under this repository's ignored `work/` folder.
 
 ## Evidence and versions
 
@@ -28,7 +28,7 @@ Inspected on 2026-11-15. Menu use and ordinary clicks assign hands automatically
 | `NSteeringWheel` / `HingedObject` | The wheel component consumes the hinged object's value/physics and uses its callbacks for wheel grabs and secondary steering lock/recenter. No per-frame global hand-button read in `NSteeringWheel`. Suitable for single-owner reuse. |
 | `NShifter` / `DoubleLinearObject` / `ShifterBase` | The H-gate's movement/value feeds gear latching, spring targets, visual stick and gear callbacks. No global hand-button reads in the inspected NShifter path. Suitable for an independent owner. |
 | Legacy `SteeringWheel`, `ShifterAssembly`, `HandBrakeAssembly` | Older systems coexist in the assembly. SteeringWheel and HandBrakeAssembly use global HandUp/HandDown. They are not the selected 0.419 vanilla interaction path and are outside this prototype. |
-| `GameInput.Hand(int)` and edge accessors | Map to primary/secondary mouse-key codes, also merging pad input. The integer is a button index. Native grabber call sites are rewritten to read their explicit grabber instance; callback/global accessor reads remain scoped to the current hand during a driven update; outside that scope gameplay sees false while captured. Normal menus retain their original button/key APIs. |
+| `GameInput.Hand(int)` and edge accessors | Map to primary/secondary mouse-key codes, also merging pad input. The integer is a button index. Button reads are scoped to the current hand during a driven grabber update; outside that scope gameplay sees false while captured. Normal menus retain their original button/key APIs. |
 | `Grabber.BeginHeldLook()` / `EndHeldLook(bool)` | Temporarily remove held-camera yaw for ray construction and then restore camera rotation. Invoking one hand at a time preserves this pair. Keyboard look behavior remains native; no combined mouse motion drives it. |
 | `CameraSwitch` / `OutsideCamera` | Cockpit look uses Q/E and shoulder-look keys; outside camera has aggregate mouse axis input. No attempt is made to add dual mouse camera control. Capture requires the interior grabber and its view camera to be active. |
 | `Gun` / `NAutomaticGun` / `Crosshair` | Gun caches a discovered grabber, uses global HandUp(0)/HandDown(1), and transitions shared aim/frozen/body/crosshair state. Automatic guns add continuous Hand(1) checks; crosshair reads a particular grabber's cursor. Guns need explicit owner-aware aim/crosshair/input adaptation and are deferred. |
@@ -47,7 +47,7 @@ All targets are in the inspected Assembly-CSharp. Installation is transactional:
 
 | Method | Patch | Behavior |
 | --- | --- | --- |
-| `Grabber.Update()` | Prefix + transpiler | Suppress automatic updates; drive each hand explicitly. Replace all seven `Hand`/`HandDown`/`HandUp` call sites with direct per-grabber reads, passing `this`. Refuse installation if any button-read family is missing. |
+| `Grabber.Update()` | Prefix | Suppress automatic updates of managed grabbers; allow explicitly driven updates in the current-hand scope. No instruction rewriting or call-site matching. |
 | `Grabber.LateUpdate()` | Prefix | Suppress automatic indicator updates; allow explicitly driven updates. |
 | `Grabber.UpdateCursor()` | Prefix | Supply the scoped device's movement instead of aggregate input. |
 | `Grabber.TryInteract(bool allowClick)` | Prefix | Gate supported targets and enforce one owner per object. |
