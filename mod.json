@@ -1,0 +1,10 @@
+{
+  "id": "wholegrip",
+  "name": "Whole Grip (prototype)",
+  "version": "0.1.0",
+  "author": "htubdawg",
+  "description": "Two physical mice, two independent vanilla cockpit hands. Windows prototype; assign right hand first with F8.",
+  "requires": [],
+  "gameVersion": "0.419",
+  "tools": "1.0.6"
+}
