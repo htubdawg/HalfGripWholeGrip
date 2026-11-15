@@ -11,22 +11,32 @@ Environment: Linux x86-64; .NET SDK 8.0.427. No Windows player, live Unity windo
 
 These checks do **not** execute Unity, Harmony detours, Win32 entry points, or actual grab/release callbacks. They cannot demonstrate independent cockpit interaction.
 
+## User report and 0.1.2 regression fix
+
+The supplied Windows log confirms **0.1.1** loaded on game **0.419**, Unity **6000.3.22f1**, and HalfGripTools **1.0.6.0**, attached to Unity's existing mouse registration with flags `0x0`, and assigned both mice. It then records four `Invalid RAWINPUT packet size` failures and repeated cockpit recapture. The user reports one mouse's movement blocking the other's clicks. This is a failed gameplay test, not acceptance of independent interaction.
+
+The old reader validated every shared-window WM_INPUT against mouse-payload size before checking the packet type. A normal keyboard packet is shorter and wrongly triggers release/reset of both hands. The log did not include the rejected packet type/size, so it cannot establish that every observed reset had that cause. 0.1.2 ignores non-mouse packets by type first and includes size details for genuine failures. It also stops clearing input on ordinary WM_CAPTURECHANGED and rewrites native hand-button reads to explicit per-grabber calls rather than relying only on global accessor detours.
+
+Added passing regressions exercise the production decoder/accumulator with 500 frames of A holding/moving while B clicks and keyboard packets interleave, then 500 frames with the devices reversed and complete between-frame clicks. Keyboard/HID packets must not reset either mouse; actual truncated mouse packets are rejected. A separate check applies the production transpiler to the real reference assembly's hand-read call sites and verifies all seven receive the correct Grabber argument. This metadata check does not execute Unity or Windows detours. The test runner uses Mono.Cecil 0.11.4 for offline reference-assembly inspection; no additional dependency is shipped in the mod.
+
+**The updated 0.1.2 still needs a Windows retest.** No additional hotkeys, modes or setup steps were introduced.
+
 ## Versions
 
 | Component | Inspected / compile checked | Windows runtime tested |
 | --- | --- | --- |
-| Game | HalfGripRefs labeled 0.419; assembly hash in INSPECTION.md | Not tested; installed build unavailable |
-| Unity | Reference README labels 6000.3.22f1 | Not tested |
-| HalfGripTools | 1.0.6, commit d2c7a786b384566562cf6fcfbdb57eb36b16e351 | Not tested |
+| Game | HalfGripRefs labeled 0.419; assembly hash in INSPECTION.md | User log confirms 0.419 with 0.1.1; interaction failed; 0.1.2 pending |
+| Unity | Reference README labels 6000.3.22f1 | User log confirms 6000.3.22f1 with 0.1.1 |
+| HalfGripTools | 1.0.6, commit d2c7a786b384566562cf6fcfbdb57eb36b16e351 | User log confirms 1.0.6.0 with 0.1.1 |
 | BepInEx | Reference set labeled 5.4.23.5 | Not tested |
 
 ## Windows acceptance procedure
 
 First use a clean vanilla game with only HalfGripTools and this mod enabled. Do not enable SlapPack or gun mods for this milestone. Record the installed game, Unity, loader, BepInEx versions and Raw Input receiver/registration mode from `BepInEx\LogOutput.log`.
 
-Every item below is **pending** until performed on Windows. Capture a short video of the two physical mice and cockpit together for the first playable milestone.
+Every item below remains **pending for 0.1.2** until performed on Windows. Capture a short video of the two physical mice and cockpit together for the first playable milestone.
 
-1. **Automatic assignment.** Replace the old mod with 0.1.1 and restart, leaving any old config in place. Navigate the menu with mouse A and start gameplay. A must become the blue R hand. Click mouse B in the cockpit; it must become orange L, with interaction immediately enabled. No function keys or config changes should be needed. Repeat with saved assignments and a different menu mouse.
+1. **Automatic assignment.** Replace the old mod with 0.1.2 and restart, leaving any old config in place. Navigate the menu with mouse A and start gameplay. A must become the blue R hand. Click mouse B in the cockpit; it must become orange L, with interaction immediately enabled. No function keys or config changes should be needed. Repeat with saved assignments and a different menu mouse.
 2. **Input visibility.** Move each mouse separately; verify its own colored hand and status reports input. If attachment fails, the status must show a reason and ordinary controls must remain available. Verify F7/F8/F9 and Shift+F8 retain their existing game/other-mod behavior.
 3. **Wheel plus shifter.** Hold/move the wheel with A while B independently grabs/moves the standard H-gate. Repeat with hands swapped, including simultaneous movement/clicks and rapid clicks entirely between rendered frames.
 4. **Release isolation.** Hold both objects. Release either mouse while the other continues moving/holding its object. Only the released hand may let go.

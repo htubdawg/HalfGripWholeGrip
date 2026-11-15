@@ -1,5 +1,7 @@
 # HalfGripWholeGrip
 
+**0.1.2:** fixes input resets on keyboard/HID packets and cursor-capture changes, and binds grabber button reads directly to each hand. No new controls.
+
 Two physical mice, two cockpit hands. Windows HalfGripTools prototype for game **0.419**, loader **1.0.6**.
 
 ## Test it
@@ -34,4 +36,4 @@ HALFGRIP_TOOLS=/path/to/HalfGripTools \
 ./tools/check.sh
 ```
 
-The script invokes HalfGripRefs' compiler checker with an isolated loader copy, then checks the production input/assignment code and native structure layouts. Other repositories are not modified. `work/`, private assemblies and decompiled game code are excluded from Git and installation.
+The script invokes HalfGripRefs' compiler checker with an isolated loader copy, then checks the production input/assignment code, mixed-device packet decoding, native structure layouts, and the actual game grabber call sites. Other repositories are not modified. `work/`, private assemblies and decompiled game code are excluded from Git and installation.

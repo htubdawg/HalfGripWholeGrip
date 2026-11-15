@@ -1,7 +1,7 @@
 {
   "id": "wholegrip",
   "name": "Whole Grip (prototype)",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "htubdawg",
   "description": "Two physical mice, two independent vanilla cockpit hands. Automatic menu-mouse assignment; no hotkeys or setup modes.",
   "requires": [],

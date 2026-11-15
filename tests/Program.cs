@@ -81,6 +81,70 @@ internal static class Program
         writer.GetAwaiter().GetResult();
         foreach (var device in Take(queue).Values) total += device.X;
         Check(total == 4000, "Concurrent snapshot lost or replayed movement");
+        // Exercise the production Win32 decoder with packets from one shared receiver window.
+        bool Decode(uint type, int payloadBytes, int device, ushort buttons, int x, int y,
+            out RawMouseInput.MouseReport report)
+        {
+            int headerBytes = IntPtr.Size == 8 ? 24 : 16;
+            int length = headerBytes + payloadBytes;
+            IntPtr buffer = Marshal.AllocHGlobal(length);
+            try
+            {
+                Marshal.Copy(new byte[length], 0, buffer, length);
+                Marshal.WriteInt32(buffer, 0, (int)type);
+                Marshal.WriteInt32(buffer, 4, length);
+                Marshal.WriteIntPtr(buffer, 8, new IntPtr(device));
+                if (type == 0 && payloadBytes >= 24)
+                {
+                    Marshal.WriteInt16(buffer, headerBytes + 4, (short)buttons);
+                    Marshal.WriteInt32(buffer, headerBytes + 12, x);
+                    Marshal.WriteInt32(buffer, headerBytes + 16, y);
+                }
+                return RawMouseInput.DecodeMousePacket(buffer, (uint)length, out report);
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+        void Feed(uint type, int payload, int device, ushort buttons = 0, int x = 0, int y = 0)
+        {
+            if (Decode(type, payload, device, buttons, x, y, out var report))
+                queue.Enqueue(new MousePacket(report.Device.ToInt64() == 1 ? "A" : "B", report.X, report.Y, report.ButtonFlags));
+        }
+        queue.Clear();
+        Check(!Decode(1, 16, 9, 0, 0, 0, out _), "Keyboard packet must be ignored, not rejected as a short mouse");
+        Check(!Decode(2, 8, 9, 0, 0, 0, out _), "HID packet must not reset mouse input");
+        bool rejected = false;
+        try { Decode(0, 16, 1, 0, 0, 0, out _); }
+        catch (InvalidOperationException) { rejected = true; }
+        Check(rejected, "Actual truncated mouse packet was accepted");
+        Feed(0, 24, 1, 1); // A holds wheel throughout, B clicks while A moves.
+        Take(queue);
+        for (int i = 0; i < 500; i++)
+        {
+            Feed(0, 24, 1, 0, 12, -3);
+            Feed(1, 16, 9); // keyboard through Unity's shared receiver, e.g. throttle/look
+            Feed(0, 24, 2, 1);
+            Feed(0, 24, 1, 0, -4, 2);
+            frame = Take(queue);
+            Check(frame["A"].Held == 1 && frame["A"].X == 8 && frame["B"].Down == 1 && frame["B"].Held == 1,
+                "Moving A or keyboard input blocked B's press");
+            Feed(0, 24, 2, 2);
+            Feed(0, 24, 1, 0, 1, 1);
+            frame = Take(queue);
+            Check(frame["A"].Held == 1 && frame["B"].Up == 1 && frame["B"].Held == 0,
+                "Releasing B interrupted A's continuous hold");
+        }
+        queue.Clear();
+        Feed(0, 24, 2, 1); // Repeat the opposite direction.
+        Take(queue);
+        for (int i = 0; i < 500; i++)
+        {
+            Feed(0, 24, 2, 0, 3, 9);
+            Feed(1, 16, 9);
+            Feed(0, 24, 1, 3); // complete A click within one frame
+            frame = Take(queue);
+            Check(frame["B"].Held == 1 && frame["B"].Y == 9 && frame["A"].Down == 1 && frame["A"].Up == 1,
+                "Moving B or keyboard input blocked A's complete click");
+        }
         Dictionary<string, DeviceFrame> Clicks(params string[] devices)
         {
             var input = new MouseFrames();

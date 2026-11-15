@@ -111,7 +111,7 @@ namespace WholeGrip
         {
             try
             {
-                if (message == 0x0008 || message == 0x0215) // focus/capture lost
+                if (message == 0x0008) // WM_KILLFOCUS; cursor capture changes are not focus loss
                 { AcceptInput = false; frames.Clear(); }
                 if (message == 0x0082) // WM_NCDESTROY; comctl removes the subclass when the window dies
                 { Healthy = false; AcceptInput = false; hooked = false; roots.Remove(this); frames.Clear(); }
@@ -122,19 +122,17 @@ namespace WholeGrip
                     uint bytes = 0, headerSize = (uint)Marshal.SizeOf<Header>();
                     if (GetRawInputData(lParam, InputCommand, IntPtr.Zero, ref bytes, headerSize) == uint.MaxValue)
                         throw new Win32Exception();
-                    if (bytes < headerSize + 24 || bytes > 65536) throw new InvalidOperationException("Invalid RAWINPUT packet size.");
+                    if (bytes < headerSize || bytes > 1048576) throw new InvalidOperationException("Invalid RAWINPUT packet size: " + bytes + " bytes (header " + headerSize + ").");
                     IntPtr buffer = Marshal.AllocHGlobal((int)bytes);
                     try
                     {
                         uint read = GetRawInputData(lParam, InputCommand, buffer, ref bytes, headerSize);
-                        if (read == uint.MaxValue || read < headerSize + 24) throw new Win32Exception();
-                        var header = Marshal.PtrToStructure<Header>(buffer);
-                        if (header.Type == MouseType && devices.TryGetValue(header.Device, out var device))
+                        if (read == uint.MaxValue || read < headerSize) throw new Win32Exception();
+                        if (DecodeMousePacket(buffer, read, out var report) && devices.TryGetValue(report.Device, out var device))
                         {
-                            var mouse = Marshal.PtrToStructure<Mouse>(IntPtr.Add(buffer, (int)headerSize));
-                            if ((mouse.Flags & 1) != 0)
+                            if ((report.Flags & 1) != 0)
                                 throw new InvalidOperationException("Absolute-position mouse packets are unsupported; assign two relative mice.");
-                            frames.Enqueue(new MousePacket(device.Path, mouse.X, mouse.Y, mouse.ButtonFlags));
+                            frames.Enqueue(new MousePacket(device.Path, report.X, report.Y, report.ButtonFlags));
                         }
                     }
                     finally { Marshal.FreeHGlobal(buffer); }
@@ -144,6 +142,31 @@ namespace WholeGrip
             { AcceptInput = false; Healthy = false; Status = e.Message; frames.Clear(); }
             // Original Unity processing must run even for foreground WM_INPUT cleanup or reader failure.
             return DefSubclassProc(hwnd, message, wParam, lParam);
+        }
+
+        internal struct MouseReport
+        {
+            public IntPtr Device;
+            public int X, Y;
+            public ushort Flags, ButtonFlags;
+        }
+
+        // WM_INPUT belongs to the receiver window, not just this mod's mouse registration.
+        // Unity also sends keyboard/HID packets here. Their payloads can be shorter than a
+        // RAWMOUSE: inspect dwType before applying mouse-specific length checks.
+        internal static bool DecodeMousePacket(IntPtr buffer, uint bytes, out MouseReport report)
+        {
+            report = default;
+            uint headerSize = (uint)Marshal.SizeOf<Header>();
+            if (bytes < headerSize) throw new InvalidOperationException("Truncated RAWINPUT header.");
+            var header = Marshal.PtrToStructure<Header>(buffer);
+            if (header.Type != MouseType) return false;
+            if (bytes < headerSize + 24 || header.Size < headerSize + 24 || header.Size > bytes)
+                throw new InvalidOperationException("Truncated RAWMOUSE packet: received " + bytes + ", declared " + header.Size + ", header " + headerSize + ".");
+            var mouse = Marshal.PtrToStructure<Mouse>(IntPtr.Add(buffer, (int)headerSize));
+            report = new MouseReport { Device = header.Device, X = mouse.X, Y = mouse.Y,
+                Flags = mouse.Flags, ButtonFlags = mouse.ButtonFlags };
+            return true;
         }
 
         private static Registration? MouseRegistration()

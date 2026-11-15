@@ -200,7 +200,13 @@ namespace WholeGrip
             foreach (var pair in owners)
                 if (pair.Value == hand && pair.Key != hand.Grabber.Held) stale.Add(pair.Key);
             foreach (var key in stale) owners.Remove(key);
-            if (hand.Grabber.Held) owners[hand.Grabber.Held] = hand;
+            if (hand.Grabber.Held)
+            {
+                if (!owners.ContainsKey(hand.Grabber.Held))
+                    context.Log.LogInfo(hand.Name + " grabbed " + hand.Grabber.Held.name +
+                        (owners.Count > 0 ? " while the other hand remains holding its object." : "."));
+                owners[hand.Grabber.Held] = hand;
+            }
         }
         private void Invoke(HandState hand, MethodInfo method)
         {
@@ -209,6 +215,14 @@ namespace WholeGrip
             finally { ActiveHand = null; Invoking = false; }
         }
         internal bool Owns(Grabber grabber) => captured && (grabber == right.Grabber || grabber == left.Grabber);
+        internal bool ReadHand(Grabber grabber, int button, int kind)
+        {
+            if (!CanRun || button < 0 || button >= 5) return false;
+            var hand = grabber == right.Grabber ? right : grabber == left.Grabber ? left : null;
+            if (hand == null || !hand.Rearmed) return false;
+            int bits = kind == 0 ? hand.Input.Held : kind == 1 ? hand.Input.Down : hand.Input.Up;
+            return (bits & (1 << button)) != 0;
+        }
         internal bool CanInteract(Grabber grabber, bool secondaryAction)
         {
             if (!CanRun || ActiveHand == null || ActiveHand.Grabber != grabber) return false;

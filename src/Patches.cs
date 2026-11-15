@@ -23,7 +23,8 @@ namespace WholeGrip
             Patch(harmony, typeof(GameInput), "Hand", nameof(Hand));
             Patch(harmony, typeof(GameInput), "HandDown", nameof(HandDown));
             Patch(harmony, typeof(GameInput), "HandUp", nameof(HandUp));
-            Patch(harmony, typeof(Grabber), "Update", nameof(GrabberUpdate));
+            harmony.Patch(Update, prefix: new HarmonyMethod(typeof(Patches), nameof(GrabberUpdate)),
+                transpiler: new HarmonyMethod(typeof(InputBindings), nameof(InputBindings.RouteGrabberInput)));
             Patch(harmony, typeof(Grabber), "LateUpdate", nameof(GrabberLate));
             Patch(harmony, typeof(Grabber), "UpdateCursor", nameof(Cursor));
             Patch(harmony, typeof(Grabber), "TryInteract", nameof(Interact));
@@ -38,6 +39,16 @@ namespace WholeGrip
             var target = AccessTools.Method(type, method) ?? throw new MissingMethodException(type.Name, method);
             h.Patch(target, prefix: new HarmonyMethod(typeof(Patches), prefix));
         }
+        private static bool OwnedInput(int button, Grabber grabber, int kind)
+        {
+            var c = DualHandController.Instance;
+            if (c != null && c.Owns(grabber)) return c.ReadHand(grabber, button, kind);
+            return kind == 0 ? GameInput.Hand(button) : kind == 1 ? GameInput.HandDown(button) : GameInput.HandUp(button);
+        }
+        internal static bool OwnedHand(int button, Grabber grabber) => OwnedInput(button, grabber, 0);
+        internal static bool OwnedHandDown(int button, Grabber grabber) => OwnedInput(button, grabber, 1);
+        internal static bool OwnedHandUp(int button, Grabber grabber) => OwnedInput(button, grabber, 2);
+
         private static bool GrabberUpdate(Grabber __instance)
         {
             var c = DualHandController.Instance;
