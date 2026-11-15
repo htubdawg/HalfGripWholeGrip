@@ -55,8 +55,12 @@ learned the hard way (*Game and Windows facts*, *Owner's wishes*). A fresh sessi
   `LateUpdate` = cursor pull-back + `UpdateIndicators` (poses, roll, force arrow). State is all per instance.
 - `GameInput` wraps legacy `Input` (mouse buttons = `KeyCode.Mouse0 + n`, i.e. 323+n); the Input System is loaded but used for the
   gamepad. `PauseController` calls `grabber.SetHandVisible(!paused)` on the hand it found.
-- SlapPack transpiles `Grabber.Update`'s `HandUp` calls into its own helper (which calls `GameInput.HandUp` → our `GetKeyUp`
-  patch), and postfixes `BeginHeldLook`, `UpdateIndicators`, `LateUpdate`: all apply to both hands unchanged.
+- SlapPack's `Grabber` patches (all scoped to its own parts, pass-through otherwise): `WiperKnobGrab` transpiles `Grabber.Update`'s
+  `HandUp` calls into a helper that reads button 1 while the wiper knob (grabbed with the right button) is held, else calls
+  `GameInput.HandUp` → our `GetKeyUp` patch; `WindowCrankLook` prefix on `BeginHeldLook` (cranks only); `WindowCrankIndicators`
+  postfix on `UpdateIndicators` (its parts only); `MirrorHandDepth` postfix on `LateUpdate`, but `KeepHandInFront` acts only on the
+  Grabber the mirror stored (the right hand), so the left hand may draw behind the mirror (cosmetic, SlapPack-side fix). All of these
+  need the game's real `Update`/`LateUpdate` to run: never replace them (0.2.0 did, which skipped every other mod's Update patch).
 - **Raw input is one window per process per device type.** Unity registers mice (page 1, usage 2, flags 0x0, its own window, on its
   main thread: seen in the owner's 0.2.0 log) and drains packets with `GetRawInputBuffer`, which bypasses `WH_GETMESSAGE` hooks.
   0.2.0 hooked the queue and logged ~100-135 packets/s with both mice moving (two mice give 250-2000/s): most were lost,
@@ -111,4 +115,12 @@ Repos side by side: `HalfGripRefs` (`/home/user/HalfGripRefs`), HalfGripTools (c
   right hand while the left steers; SlapPack parts with the right hand. Send the log.
 - **Open questions:** does Unity re-register mice during a race (log `keeps taking the mice back`)? Is Unity's mouse back in the
   menus after every give-back (it should be: same window and flags restored)? Should the left hand be allowed more parts?
-- **Next step:** owner merges the PR and tests; listing it in jMods (README section + CLAUDE.md table) after a release.
+- **PR:** [htubdawg/HalfGripWholeGrip#2](https://github.com/htubdawg/HalfGripWholeGrip/pull/2) (`claude/jolly-ritchie-e6wh7t` → `main`),
+  open. Before pushing more to that branch, check it is still open; if merged, start a new branch from `main`.
+- **Told the owner, awaiting answers:** author credit set to `Codex & Claude - Oretsej` (Codex had inferred `htubdawg` from the repo
+  owner; change if the owner wants); asked whether to watch the PR (no answer yet). Owner asked about SlapPack's Grabber patches;
+  answered (see *Game and Windows facts*): harmless to other mods, the transpiler is justified, only 0.2.0's Update replacement broke them.
+- **Session notes:** HalfGripTools built from source this session (clone to `/home/user/htubdawg/HalfGripTools`); jMods is
+  read-only from here (public clone only), so its README/table can't be edited from this repo's sessions without push access.
+- **Next step:** owner merges the PR and tests in game, sends `LogOutput.log` (VerboseLog on); fix from the log. After a release,
+  list Whole Grip in jMods (README section + CLAUDE.md table + sync workflow entry).
