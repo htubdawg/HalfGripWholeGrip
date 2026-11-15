@@ -6,7 +6,8 @@ using System.Text;
 
 namespace WholeGrip
 {
-    // Reads WM_INPUT on Unity's own receiver. Never uses NOLEGACY, INPUTSINK or a helper window.
+    // Copies WM_INPUT at removal from Unity's thread queue, before Unity handles it.
+    // One capture path only; window subclass handles lifecycle messages, never mouse packets.
     internal sealed class RawMouseInput : IDisposable
     {
         internal sealed class Device
@@ -24,6 +25,11 @@ namespace WholeGrip
         // Root delegates for as long as a subclass is installed (including removal failure).
         private static readonly HashSet<RawMouseInput> roots = new HashSet<RawMouseInput>();
         private readonly SubclassProc callback;
+        private readonly MessageProc messageCallback;
+        private IntPtr messageHook, packetBuffer;
+        private uint packetCapacity;
+        public long MousePackets { get; private set; }
+        public long IgnoredPackets { get; private set; }
         private readonly UIntPtr subclassId = new UIntPtr(0x57475250);
         private IntPtr window;
         private bool registered, hooked;
@@ -33,7 +39,7 @@ namespace WholeGrip
         public IEnumerable<Device> Devices => devices.Values;
 
         public RawMouseInput(MouseFrames frames, Action<string> log)
-        { this.frames = frames; this.log = log; callback = WindowProc; }
+        { this.frames = frames; this.log = log; callback = WindowProc; messageCallback = MessageHook; }
 
         public void Attach()
         {
@@ -51,6 +57,11 @@ namespace WholeGrip
             hooked = true; roots.Add(this);
             try
             {
+                // GetMessage/PeekMessage removal is earlier than Unity's dispatch/filter code.
+                // PM_NOREMOVE observations are ignored so repeated peeks cannot duplicate motion.
+                messageHook = SetWindowsHookEx(3, messageCallback, IntPtr.Zero, thread);
+                if (messageHook == IntPtr.Zero) throw new Win32Exception();
+                packetCapacity = 64; packetBuffer = Marshal.AllocHGlobal((int)packetCapacity);
                 if (!current.HasValue)
                 {
                     var registration = new Registration { Page = 1, Usage = 2, Flags = DevNotify, Target = window };
@@ -59,7 +70,7 @@ namespace WholeGrip
                     Status = "registered foreground mouse input on Unity window";
                 }
                 else Status = "cooperating with Unity registration (flags 0x" + current.Value.Flags.ToString("X") + ")";
-                log(Status + "; receiver=0x" + window.ToInt64().ToString("X"));
+                log("Queue hook (before Unity dispatch): " + Status + "; receiver=0x" + window.ToInt64().ToString("X"));
             }
             catch { Dispose(); throw; }
         }
@@ -114,34 +125,56 @@ namespace WholeGrip
                 if (message == 0x0008) // WM_KILLFOCUS; cursor capture changes are not focus loss
                 { AcceptInput = false; frames.Clear(); }
                 if (message == 0x0082) // WM_NCDESTROY; comctl removes the subclass when the window dies
-                { Healthy = false; AcceptInput = false; hooked = false; roots.Remove(this); frames.Clear(); }
+                { Healthy = false; AcceptInput = false; hooked = false; ReleaseRoot(); frames.Clear(); }
                 if (message == 0x00fe && wParam.ToUInt64() == 2 && devices.TryGetValue(lParam, out var removed))
                 { devices.Remove(lParam); frames.Forget(removed.Path); }
-                if (message == WmInput && AcceptInput)
-                {
-                    uint bytes = 0, headerSize = (uint)Marshal.SizeOf<Header>();
-                    if (GetRawInputData(lParam, InputCommand, IntPtr.Zero, ref bytes, headerSize) == uint.MaxValue)
-                        throw new Win32Exception();
-                    if (bytes < headerSize || bytes > 1048576) throw new InvalidOperationException("Invalid RAWINPUT packet size: " + bytes + " bytes (header " + headerSize + ").");
-                    IntPtr buffer = Marshal.AllocHGlobal((int)bytes);
-                    try
-                    {
-                        uint read = GetRawInputData(lParam, InputCommand, buffer, ref bytes, headerSize);
-                        if (read == uint.MaxValue || read < headerSize) throw new Win32Exception();
-                        if (DecodeMousePacket(buffer, read, out var report) && devices.TryGetValue(report.Device, out var device))
-                        {
-                            if ((report.Flags & 1) != 0)
-                                throw new InvalidOperationException("Absolute-position mouse packets are unsupported; assign two relative mice.");
-                            frames.Enqueue(new MousePacket(device.Path, report.X, report.Y, report.ButtonFlags));
-                        }
-                    }
-                    finally { Marshal.FreeHGlobal(buffer); }
-                }
             }
             catch (Exception e)
             { AcceptInput = false; Healthy = false; Status = e.Message; frames.Clear(); }
             // Original Unity processing must run even for foreground WM_INPUT cleanup or reader failure.
             return DefSubclassProc(hwnd, message, wParam, lParam);
+        }
+
+        private IntPtr MessageHook(int code, UIntPtr remove, IntPtr pointer)
+        {
+            try
+            {
+                if (code >= 0 && AcceptInput)
+                {
+                    var message = Marshal.PtrToStructure<ThreadMessage>(pointer);
+                    if (ShouldReadMessage(code, remove.ToUInt64(), message.Message)) ReadMessage(message.LParam);
+                }
+            }
+            catch (Exception e)
+            { AcceptInput = false; Healthy = false; Status = e.Message; frames.Clear(); }
+            return CallNextHookEx(messageHook, code, remove, pointer);
+        }
+
+        // Kept in the production gate and checked by tests: peeks + later removal must read once.
+        internal static bool ShouldReadMessage(int code, ulong remove, uint message) =>
+            code >= 0 && remove == 1 && message == WmInput;
+
+        private void ReadMessage(IntPtr input)
+        {
+            uint bytes = packetCapacity, headerSize = (uint)Marshal.SizeOf<Header>();
+            uint read = GetRawInputData(input, InputCommand, packetBuffer, ref bytes, headerSize);
+            if (read == uint.MaxValue && Marshal.GetLastWin32Error() == 122 && bytes > packetCapacity && bytes <= 1048576)
+            {
+                // Mouse packets always fit the initial buffer. Grow only for a larger shared HID
+                // packet; retain the buffer for every following event, not an allocation per sample.
+                packetBuffer = Marshal.ReAllocHGlobal(packetBuffer, new IntPtr(bytes)); packetCapacity = bytes;
+                read = GetRawInputData(input, InputCommand, packetBuffer, ref bytes, headerSize);
+            }
+            if (read == uint.MaxValue) throw new Win32Exception();
+            if (DecodeMousePacket(packetBuffer, read, out var report))
+            {
+                if (!devices.TryGetValue(report.Device, out var device)) return;
+                if ((report.Flags & 1) != 0)
+                    throw new InvalidOperationException("Absolute-position mouse packets are unsupported; assign two relative mice.");
+                frames.Enqueue(new MousePacket(device.Path, report.X, report.Y, report.ButtonFlags));
+                MousePackets++;
+            }
+            else IgnoredPackets++;
         }
 
         internal struct MouseReport
@@ -189,6 +222,12 @@ namespace WholeGrip
         public void Dispose()
         {
             AcceptInput = false; frames.Clear();
+            if (messageHook != IntPtr.Zero)
+            {
+                if (UnhookWindowsHookEx(messageHook)) messageHook = IntPtr.Zero;
+                else log("Thread input hook removal failed; callback retained inert until process exit.");
+            }
+            if (packetBuffer != IntPtr.Zero) { Marshal.FreeHGlobal(packetBuffer); packetBuffer = IntPtr.Zero; packetCapacity = 0; }
             if (registered)
             {
                 try
@@ -206,11 +245,29 @@ namespace WholeGrip
             }
             if (hooked)
             {
-                if (RemoveWindowSubclass(window, callback, subclassId)) { hooked = false; roots.Remove(this); }
+                if (RemoveWindowSubclass(window, callback, subclassId)) { hooked = false; ReleaseRoot(); }
                 else log("Window subclass removal failed; callback retained and inert until window destruction.");
             }
+            ReleaseRoot();
         }
+        private void ReleaseRoot() { if (!hooked && messageHook == IntPtr.Zero) roots.Remove(this); }
 
+        [StructLayout(LayoutKind.Sequential)] private struct ThreadMessage
+        {
+            public IntPtr Window;
+            public uint Message;
+            public UIntPtr WParam;
+            public IntPtr LParam;
+            public uint Time;
+            public int X, Y;
+            public uint Private;
+        }
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        private delegate IntPtr MessageProc(int code, UIntPtr remove, IntPtr message);
+        [DllImport("user32.dll", EntryPoint = "SetWindowsHookExW", SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int id, MessageProc callback, IntPtr module, uint thread);
+        [DllImport("user32.dll", SetLastError = true)] private static extern bool UnhookWindowsHookEx(IntPtr hook);
+        [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, UIntPtr remove, IntPtr message);
         [StructLayout(LayoutKind.Sequential)] private struct DeviceList { public IntPtr Handle; public uint Type; }
         [StructLayout(LayoutKind.Sequential)] private struct Registration { public ushort Page, Usage; public uint Flags; public IntPtr Target; }
         [StructLayout(LayoutKind.Sequential)] private struct Header { public uint Type, Size; public IntPtr Device; public UIntPtr Param; }

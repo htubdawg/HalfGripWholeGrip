@@ -17,3 +17,6 @@ bash "$REFS/tools/check-mod.sh" "$ROOT/src" "$BUILD/loader"
 # check-mod.sh filters compiler output through a pipeline; assert the output exists as well.
 test -s "$BUILD/halfgrip-check/out/HalfGripMod.Check.dll"
 dotnet run --project "$ROOT/tests/WholeGrip.Checks.csproj" -c Release
+dotnet run --project "$ROOT/tests/AssemblyAudit/AssemblyAudit.csproj" -c Release -- \
+    "$REFS/game/HalfGrip_Data/Managed/Assembly-CSharp.dll" \
+    "$BUILD/halfgrip-check/out/HalfGripMod.Check.dll"

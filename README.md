@@ -1,6 +1,6 @@
 # HalfGripWholeGrip
 
-**0.1.3:** fixes the 0.1.2 startup failure by removing its strict grabber transpiler. Keeps the keyboard/HID packet and cursor-capture reset fixes. No new controls.
+**0.2.0:** replaces the interaction/input path. Each hand consumes only its own Raw Input frame; no `GameInput.Hand*` interception and no replay of native `Grabber.Update`. Movement is applied once per hand per frame, with every button edge preserved. Packets are copied from the thread queue before Unity dispatch, using a reusable buffer and one capture path.
 
 Two physical mice, two cockpit hands. Windows HalfGripTools prototype for game **0.419**, loader **1.0.6**.
 
@@ -36,4 +36,4 @@ HALFGRIP_TOOLS=/path/to/HalfGripTools \
 ./tools/check.sh
 ```
 
-The script invokes HalfGripRefs' compiler checker with an isolated loader copy, then checks the production input/assignment code, mixed-device packet decoding, native structure layouts. Other repositories are not modified. `work/`, private assemblies and decompiled game code are excluded from Git and installation.
+The script invokes HalfGripRefs' compiler checker with an isolated loader copy, then checks production input/assignment/scheduling, mixed-device decoding, message-removal gating, native layouts, and native-helper metadata. Scheduling checks cover two simultaneous holds, ordered clicks, releases and ownership conflicts at 1–500 packets per mouse per frame. Other repositories are not modified. `work/`, private assemblies and decompiled game code are excluded from Git and installation.

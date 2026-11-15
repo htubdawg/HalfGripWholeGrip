@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Configuration;
 using HalfGripTools;
 using UnityEngine;
@@ -32,11 +31,10 @@ namespace WholeGrip
         private CursorLockMode savedCursorLock;
         private bool savedCursorVisible;
         private int frameNumber = -1;
-        private float nextRefresh;
+        private float nextRefresh, nextReport;
         private string status = "Starting";
-        internal bool Invoking { get; private set; }
+        internal bool InvokingIndicators { get; private set; }
         internal HandState ActiveHand { get; private set; }
-        internal bool CapturingGameplay => captured;
         internal bool CanRun => captured && !faulted && Application.isFocused && !GameInput.Muted &&
             !InteriorMath.Paused && Time.timeScale > 0 && !GameManager.raceOver && right.Grabber &&
             right.Grabber.isActiveAndEnabled && right.Grabber.viewCamera && right.Grabber.viewCamera.isActiveAndEnabled;
@@ -108,6 +106,14 @@ namespace WholeGrip
                 ApplyAssignment(right, assignment.Right, rightDevice);
                 ApplyAssignment(left, assignment.Left, leftDevice);
                 foreach (var hand in Hands()) Tick(hand, snapshot);
+                if (Time.unscaledTime >= nextReport)
+                {
+                    nextReport = Time.unscaledTime + 10f;
+                    context.Log.LogInfo("Input pipeline: " + raw.MousePackets + " mouse packets, " + raw.IgnoredPackets +
+                        " non-mouse packets ignored; R=" + (right.Grabber && right.Grabber.Held ? right.Grabber.Held.name : "free") +
+                        "; L=" + (left.Grabber && left.Grabber.Held ? left.Grabber.Held.name : "free") +
+                        "; raw-only interaction, one movement update per hand/frame.");
+                }
             }
             catch (Exception e)
             {
@@ -143,6 +149,8 @@ namespace WholeGrip
             left.Grabber = secondary.AddComponent<Grabber>();
             left.Grabber.enabled = false; // driven explicitly; no cloned cockpit or native Start/Update
             CopySettings(original, left.Grabber);
+            right.Interaction = new VanillaHandInteraction(this, right);
+            left.Interaction = new VanillaHandInteraction(this, left);
             Patches.Release(original);
             original.lockHardwareCursor = true;
             right.Grabber.cursor = new Vector2(Screen.width * 0.6f, Screen.height * 0.5f);
@@ -161,7 +169,7 @@ namespace WholeGrip
             if (string.Equals(hand.Device, device, StringComparison.OrdinalIgnoreCase)) return;
             Release(hand);
             hand.Device = device; hand.Rearmed = true; hand.SeenInput = false;
-            hand.Frame = null; hand.Input = default;
+            hand.Frame = null; hand.Driver.Reset();
             setting.Value = device;
             context.Log.LogInfo("Assigned " + hand.Name + " hand automatically.");
         }
@@ -170,7 +178,7 @@ namespace WholeGrip
         {
             if (!hand.Grabber) return;
             if (string.IsNullOrEmpty(hand.Device) || !raw.Connected(hand.Device))
-            { Release(hand); hand.Rearmed = false; hand.Frame = null; hand.Input = default; return; }
+            { Release(hand); hand.Rearmed = false; hand.Frame = null; hand.Driver.Reset(); return; }
             if (!snapshot.TryGetValue(hand.Device, out var frame)) frame = new DeviceFrame();
             hand.Frame = frame;
             if (frame.X != 0 || frame.Y != 0 || frame.Down != 0 || frame.Up != 0) hand.SeenInput = true;
@@ -181,18 +189,10 @@ namespace WholeGrip
                 if (frame.Held == 0 && frame.Down == 0) hand.Rearmed = true;
                 else return;
             }
-            if (hand.Grabber.Held && !hand.Grabber.Held.IsGrabbed) Release(hand);
-            var steps = frame.Steps;
-            if (steps.Count == 0) steps.Add(new MouseStep(0, 0, frame.Held));
-            foreach (var step in steps)
-            {
-                hand.Input = step;
-                Invoke(hand, Patches.Update);
-                ReconcileOwner(hand);
-            }
-            // A reconnect can replace a handle between polls without a button-up packet. The
-            // accumulator forgets that device; neutral input must not leave its previous hold stuck.
-            if (hand.Grabber.Held && (frame.Held & 1) == 0 && (frame.Up & 1) == 0) Release(hand);
+            ActiveHand = hand;
+            try { hand.Driver.Step(frame, hand.Interaction); }
+            finally { ActiveHand = null; }
+            ReconcileOwner(hand);
         }
         private void ReconcileOwner(HandState hand)
         {
@@ -208,21 +208,13 @@ namespace WholeGrip
                 owners[hand.Grabber.Held] = hand;
             }
         }
-        private void Invoke(HandState hand, MethodInfo method)
+        private void UpdateIndicators(HandState hand)
         {
-            Invoking = true; ActiveHand = hand;
-            try { method.Invoke(hand.Grabber, null); }
-            finally { ActiveHand = null; Invoking = false; }
+            InvokingIndicators = true;
+            try { Patches.LateUpdate.Invoke(hand.Grabber, null); }
+            finally { InvokingIndicators = false; }
         }
         internal bool Owns(Grabber grabber) => captured && (grabber == right.Grabber || grabber == left.Grabber);
-        internal bool ReadHand(Grabber grabber, int button, int kind)
-        {
-            if (!CanRun || button < 0 || button >= 5) return false;
-            var hand = grabber == right.Grabber ? right : grabber == left.Grabber ? left : null;
-            if (hand == null || !hand.Rearmed) return false;
-            int bits = kind == 0 ? hand.Input.Held : kind == 1 ? hand.Input.Down : hand.Input.Up;
-            return (bits & (1 << button)) != 0;
-        }
         internal bool CanInteract(Grabber grabber, bool secondaryAction)
         {
             if (!CanRun || ActiveHand == null || ActiveHand.Grabber != grabber) return false;
@@ -232,21 +224,16 @@ namespace WholeGrip
             if (owners.TryGetValue(target, out var owner) && owner != ActiveHand) return false;
             return !target.IsGrabbed || (secondaryAction && grabber.Held == target);
         }
-        internal void UpdateCursor(Grabber grabber)
-        {
-            if (!CanRun || ActiveHand == null || ActiveHand.Grabber != grabber) return;
-            bool free = !grabber.Held || (grabber.Held.frozen && grabber.Held.hideHandWhenFrozen);
-            if (!free) grabber.cursor = grabber.viewCamera.WorldToScreenPoint(grabber.Held.PlaneToWorld((Vector2)Patches.RawPoint.GetValue(grabber)));
-            AddDelta(ActiveHand, free);
-        }
-        private void AddDelta(HandState hand, bool clamp)
+        internal void MoveCursor(HandState hand, long x, long y)
         {
             var grabber = hand.Grabber;
+            bool clamp = !grabber.Held || (grabber.Held.frozen && grabber.Held.hideHandWhenFrozen);
+            if (!clamp) grabber.cursor = grabber.viewCamera.WorldToScreenPoint(grabber.Held.PlaneToWorld((Vector2)Patches.RawPoint.GetValue(grabber)));
             float setting = hand == right ? rightSensitivity.Value : leftSensitivity.Value;
             float sensitivity = float.IsNaN(setting) || float.IsInfinity(setting) ? 1f : Mathf.Clamp(setting, 0.01f, 20f);
             float scale = sensitivity * grabber.cursorSensitivity * Grabber.HandSensitivity * Screen.height / 1080f;
             // Windows relative Y increases downwards; Unity screen Y increases upwards.
-            grabber.cursor += new Vector2(hand.Input.X, -hand.Input.Y) * scale;
+            grabber.cursor += new Vector2(x, -y) * scale;
             if (clamp)
             {
                 Vector2 margin = new Vector2(Screen.width, Screen.height) * (Mathf.Max(1f, grabber.screenLimitScale) - 1f) * 0.5f;
@@ -263,7 +250,7 @@ namespace WholeGrip
             try
             {
                 foreach (var hand in Hands())
-                    if (hand.Grabber && hand.Rearmed && raw != null && raw.Connected(hand.Device)) Invoke(hand, Patches.LateUpdate);
+                    if (hand.Grabber && hand.Rearmed && raw != null && raw.Connected(hand.Device)) UpdateIndicators(hand);
                     else HideIndicators(hand.Grabber);
             }
             catch (Exception e)
@@ -278,7 +265,7 @@ namespace WholeGrip
             {
                 try { Release(hand); }
                 catch (Exception e) { context?.Log.LogError("Release cleanup: " + e); }
-                hand.Rearmed = false; hand.Frame = null; hand.Input = default; HideIndicators(hand.Grabber);
+                hand.Rearmed = false; hand.Frame = null; hand.Driver.Reset(); HideIndicators(hand.Grabber);
             }
             owners.Clear();
         }
@@ -304,7 +291,7 @@ namespace WholeGrip
             if (right.Grabber && (!right.Grabber.isActiveAndEnabled || InteriorMath.Paused || Time.timeScale <= 0))
                 HideIndicators(right.Grabber);
             if (secondary) { secondary.SetActive(false); Object.Destroy(secondary); }
-            secondary = null; right.Grabber = left.Grabber = null; allowed.Clear();
+            secondary = null; right.Interaction = left.Interaction = null; right.Grabber = left.Grabber = null; allowed.Clear();
             // Paused/menu code owns the cursor there. Restore only during active gameplay takeover.
             if (wasCaptured && Application.isFocused && !InteriorMath.Paused && Time.timeScale > 0)
             { UnityEngine.Cursor.lockState = savedCursorLock; UnityEngine.Cursor.visible = savedCursorVisible; }

@@ -22,6 +22,11 @@ internal static class Program
         Check(Marshal.SizeOf(Layout("Registration")) == (IntPtr.Size == 8 ? 16 : 12), "RAWINPUTDEVICE ABI mismatch");
         Check(Marshal.SizeOf(Layout("Info")) == 32 && Marshal.OffsetOf(Layout("Info"), "Buttons").ToInt32() == 12,
             "RID_DEVICE_INFO ABI mismatch");
+        Check(Marshal.SizeOf(Layout("ThreadMessage")) == (IntPtr.Size == 8 ? 48 : 32), "MSG ABI mismatch");
+        Check(Marshal.OffsetOf(Layout("ThreadMessage"), "LParam").ToInt32() == (IntPtr.Size == 8 ? 24 : 12), "MSG lParam offset mismatch");
+        Check(!RawMouseInput.ShouldReadMessage(0, 0, 0xff) && RawMouseInput.ShouldReadMessage(0, 1, 0xff) &&
+            !RawMouseInput.ShouldReadMessage(-1, 1, 0xff) && !RawMouseInput.ShouldReadMessage(0, 1, 0x200),
+            "Queue-hook repeated peeks, non-input or negative callbacks would duplicate input");
         var queue = new MouseFrames();
         queue.Enqueue(new MousePacket("A", 8, -3, 1));
         queue.Enqueue(new MousePacket("B", -7, 4, 4));
@@ -175,6 +180,7 @@ internal static class Program
         fresh.MenuMouse = "B";
         fresh.EnterGameplay(Connected);
         Check(fresh.Right != fresh.Left, "Menu selection left duplicate device ownership");
+        TestHands.Run(Check);
         Console.WriteLine("PASS: production input, automatic assignment, native layout and concurrency checks (" + assertions + " assertions).");
     }
 }

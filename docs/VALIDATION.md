@@ -11,6 +11,19 @@ Environment: Linux x86-64; .NET SDK 8.0.427. No Windows player, live Unity windo
 
 These checks do **not** execute Unity, Harmony detours, Win32 entry points, or actual grab/release callbacks. They cannot demonstrate independent cockpit interaction.
 
+## 0.2.0 interaction rewrite
+
+The user reports 0.1.3 remains jittery/laggy, with overlapping behavior and substantial missing input. Previous compile/queue-only checks did not exercise the whole hand scheduler and did not establish that the native shared input interception worked. 0.2.0 replaces that design rather than adding another accessor patch.
+
+- `Grabber.Update` is never manually invoked and its shared mouse reads are never used for either owned hand. All `GameInput.Hand*` and UpdateCursor interception has been removed. `HandDriver` consumes DeviceFrame data explicitly; its Unity adapter calls only native geometry/callback helpers.
+- Per-device movement totals are applied once per hand/frame. Ordered presses/releases remain individual actions, preserving even complete clicks between frames. Held-object target update is at most once per frame, independent of raw polling rate. Frame-total movement is applied before that frame's ordered button edges, like a frame snapshot; this does not reconstruct the exact sub-frame pointer trajectory.
+- A same-thread `WH_GETMESSAGE` hook copies WM_INPUT before it returns to Unity's message retrieval code. Non-removing peeks are ignored. The window subclass no longer reads packets, preventing double delivery. A retained native buffer avoids per-sample HGlobal allocation and the usual separate size query. Original messages/hook processing remain intact.
+- Automatic log summaries report packet totals and both held targets every ten seconds. No extra test controls or modes were added.
+
+**Executed checks:** zero compiler warnings/errors; production decoder/queue/assignment/layout/concurrency checks; production HandDriver with interaction doubles at 1, 4, 8, 64 and 500 samples per mouse/frame over 200 frames each. The scheduler checks two simultaneous holds, secondary clicks on both hands, one hand releasing/regrabbing while the other continuously moves/holds, complete between-frame clicks, exact delta totals, exactly one Move and at most one held update per hand/frame, and competing ownership/release isolation. Native metadata auditing checks that all called geometry helpers exist and neither they nor the compiled controller/scheduler read shared Hand*/aggregate mouse APIs. MSG layout and the production message-removal gate are also checked.
+
+**Limits:** the interaction doubles do not execute Unity physics/callbacks. Native hooks, Harmony prefixes, camera projection and rendering still need Windows testing. The message hook observes WM_INPUT removed by GetMessage/PeekMessage; it does not detour direct GetRawInputBuffer calls. The native engine's exact message/buffer consumption behavior cannot be measured on this Linux machine. No claim of a verified final Windows gameplay fix is made from these tests. Source and evidence are available for further review.
+
 ## User report and 0.1.2 regression fix
 
 The supplied Windows log confirms **0.1.1** loaded on game **0.419**, Unity **6000.3.22f1**, and HalfGripTools **1.0.6.0**, attached to Unity's existing mouse registration with flags `0x0`, and assigned both mice. It then records four `Invalid RAWINPUT packet size` failures and repeated cockpit recapture. The user reports one mouse's movement blocking the other's clicks. This is a failed gameplay test, not acceptance of independent interaction.
@@ -33,7 +46,7 @@ Version **0.1.3** removes that transpiler, its wrappers, and its offline binding
 
 | Component | Inspected / compile checked | Windows runtime tested |
 | --- | --- | --- |
-| Game | HalfGripRefs labeled 0.419; assembly hash in INSPECTION.md | User log confirms 0.419 with 0.1.1; interaction failed; 0.1.3 pending |
+| Game | HalfGripRefs labeled 0.419; assembly hash in INSPECTION.md | User log confirms 0.419 with 0.1.1; interaction failed; 0.2.0 pending |
 | Unity | Reference README labels 6000.3.22f1 | User log confirms 6000.3.22f1 with 0.1.1 |
 | HalfGripTools | 1.0.6, commit d2c7a786b384566562cf6fcfbdb57eb36b16e351 | User log confirms 1.0.6.0 with 0.1.1 |
 | BepInEx | Reference set labeled 5.4.23.5 | Not tested |
@@ -42,9 +55,9 @@ Version **0.1.3** removes that transpiler, its wrappers, and its offline binding
 
 First use a clean vanilla game with only HalfGripTools and this mod enabled. Do not enable SlapPack or gun mods for this milestone. Record the installed game, Unity, loader, BepInEx versions and Raw Input receiver/registration mode from `BepInEx\LogOutput.log`.
 
-Every item below remains **pending for 0.1.3** until performed on Windows. Capture a short video of the two physical mice and cockpit together for the first playable milestone.
+Every item below remains **pending for 0.2.0** until performed on Windows. Capture a short video of the two physical mice and cockpit together for the first playable milestone.
 
-1. **Automatic assignment.** Replace the old mod with 0.1.3 and restart, leaving any old config in place. Navigate the menu with mouse A and start gameplay. A must become the blue R hand. Click mouse B in the cockpit; it must become orange L, with interaction immediately enabled. No function keys or config changes should be needed. Repeat with saved assignments and a different menu mouse.
+1. **Automatic assignment.** Replace the old mod with 0.2.0 and restart, leaving any old config in place. Navigate the menu with mouse A and start gameplay. A must become the blue R hand. Click mouse B in the cockpit; it must become orange L, with interaction immediately enabled. No function keys or config changes should be needed. Repeat with saved assignments and a different menu mouse.
 2. **Input visibility.** Move each mouse separately; verify its own colored hand and status reports input. If attachment fails, the status must show a reason and ordinary controls must remain available. Verify F7/F8/F9 and Shift+F8 retain their existing game/other-mod behavior.
 3. **Wheel plus shifter.** Hold/move the wheel with A while B independently grabs/moves the standard H-gate. Repeat with hands swapped, including simultaneous movement/clicks and rapid clicks entirely between rendered frames.
 4. **Release isolation.** Hold both objects. Release either mouse while the other continues moving/holding its object. Only the released hand may let go.

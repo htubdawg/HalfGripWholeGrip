@@ -8,7 +8,8 @@ namespace WholeGrip
         public readonly Color Color;
         public Grabber Grabber;
         public string Device;
-        public MouseStep Input;
+        public readonly HandDriver Driver = new HandDriver();
+        public VanillaHandInteraction Interaction;
         public DeviceFrame Frame;
         public bool Rearmed, SeenInput;
         public HandState(string name, Color color) { Name = name; Color = color; }

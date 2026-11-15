@@ -16,19 +16,10 @@ namespace WholeGrip
         private static readonly FieldInfo Suppress = AccessTools.Field(typeof(Grabber), "suppressSweep");
         internal static void Install(Harmony harmony)
         {
-            if (Update == null || LateUpdate == null || RawPoint == null || Held == null || Hovered == null || HeldLast == null || Suppress == null)
+            if (Update == null || LateUpdate == null || RawPoint == null || Held == null || Hovered == null || HeldLast == null || Suppress == null || HoverMethod == null || InteractMethod == null || SecondaryMethod == null || MoveHeldMethod == null || BeginMethod == null || EndMethod == null)
                 throw new MissingMemberException("Grabber shape differs from inspected build.");
-            // Patch the small input accessors before recompiling their callers, avoiding stale
-            // inlined aggregate mouse reads when Harmony generates Grabber's replacement body.
-            Patch(harmony, typeof(GameInput), "Hand", nameof(Hand));
-            Patch(harmony, typeof(GameInput), "HandDown", nameof(HandDown));
-            Patch(harmony, typeof(GameInput), "HandUp", nameof(HandUp));
             Patch(harmony, typeof(Grabber), "Update", nameof(GrabberUpdate));
             Patch(harmony, typeof(Grabber), "LateUpdate", nameof(GrabberLate));
-            Patch(harmony, typeof(Grabber), "UpdateCursor", nameof(Cursor));
-            Patch(harmony, typeof(Grabber), "TryInteract", nameof(Interact));
-            Patch(harmony, typeof(Grabber), "DispatchRightClick", nameof(RightClick));
-
             Patch(harmony, typeof(PauseController), "SetPaused", nameof(Pause));
             // This gate closes immediately when UI mutes gameplay during a later script's Update.
             harmony.Patch(AccessTools.Method(typeof(GameInput), "Mute"), postfix: new HarmonyMethod(typeof(Patches), nameof(Mute)));
@@ -41,37 +32,26 @@ namespace WholeGrip
         private static bool GrabberUpdate(Grabber __instance)
         {
             var c = DualHandController.Instance;
-            return c == null || !c.Owns(__instance) || c.Invoking;
+            return c == null || !c.Owns(__instance);
         }
-        private static bool GrabberLate(Grabber __instance) => GrabberUpdate(__instance);
-        private static bool Cursor(Grabber __instance)
+        private static bool GrabberLate(Grabber __instance)
         {
             var c = DualHandController.Instance;
-            if (c == null || !c.Owns(__instance)) return true;
-            c.UpdateCursor(__instance);
-            return false;
+            return c == null || !c.Owns(__instance) || c.InvokingIndicators;
         }
-        private static bool Interact(Grabber __instance)
-        {
-            var c = DualHandController.Instance;
-            return c == null || !c.Owns(__instance) || c.CanInteract(__instance, false);
-        }
-        private static bool RightClick(Grabber __instance)
-        {
-            var c = DualHandController.Instance;
-            return c == null || !c.Owns(__instance) || c.CanInteract(__instance, true);
-        }
-        private static bool Read(int button, int kind, ref bool result)
-        {
-            var c = DualHandController.Instance;
-            if (c == null || !c.CapturingGameplay) return true;
-            var hand = c.ActiveHand;
-            result = hand != null && c.ReadHand(hand.Grabber, button, kind);
-            return false;
-        }
-        private static bool Hand(int button, ref bool __result) => Read(button, 0, ref __result);
-        private static bool HandDown(int button, ref bool __result) => Read(button, 1, ref __result);
-        private static bool HandUp(int button, ref bool __result) => Read(button, 2, ref __result);
+        private static readonly MethodInfo HoverMethod = AccessTools.Method(typeof(Grabber), "UpdateHover");
+        private static readonly MethodInfo InteractMethod = AccessTools.Method(typeof(Grabber), "TryInteract");
+        private static readonly MethodInfo SecondaryMethod = AccessTools.Method(typeof(Grabber), "DispatchRightClick");
+        private static readonly MethodInfo MoveHeldMethod = AccessTools.Method(typeof(Grabber), "UpdateHeld");
+        private static readonly MethodInfo BeginMethod = AccessTools.Method(typeof(Grabber), "BeginHeldLook");
+        private static readonly MethodInfo EndMethod = AccessTools.Method(typeof(Grabber), "EndHeldLook");
+        internal static void Hover(Grabber g, Ray ray) => HoverMethod.Invoke(g, new object[] { ray });
+        internal static void Interact(Grabber g, bool click) => InteractMethod.Invoke(g, new object[] { click });
+        internal static void Secondary(Grabber g) => SecondaryMethod.Invoke(g, null);
+        internal static void MoveHeld(Grabber g, Ray ray) => MoveHeldMethod.Invoke(g, new object[] { ray });
+        internal static bool BeginLook(Grabber g) => (bool)BeginMethod.Invoke(g, null);
+        internal static void EndLook(Grabber g, bool begun) => EndMethod.Invoke(g, new object[] { begun });
+        internal static void ClearHeld(Grabber g) { Held.SetValue(g, null); Hovered.SetValue(g, null); }
         private static void Pause(bool paused) { if (paused) DualHandController.Instance?.Suspend(); }
         private static void Mute() { if (GameInput.Muted) DualHandController.Instance?.Suspend(); }
         internal static void Release(Grabber grabber)
