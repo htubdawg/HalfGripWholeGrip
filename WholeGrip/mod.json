@@ -1,0 +1,11 @@
+{
+  "id": "wholegrip",
+  "name": "Whole Grip",
+  "version": "0.3.1",
+  "author": "Claude - Codex - Oretsej",
+  "description": "Two mice, two hands: plug in a second mouse and drive the cockpit with both hands, one on the wheel and one on the shifter.",
+  "icon": "icon.png",
+  "requires": [],
+  "gameVersion": "0.419",
+  "tools": "1.0.6"
+}

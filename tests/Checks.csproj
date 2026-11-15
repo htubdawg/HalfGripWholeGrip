@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Runs WholeGrip/src/HandInput.cs and Assignment.cs as they ship (no Unity in them), and scans the game assembly for the
+       members the patches name by string. tools/check.sh runs it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>10.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../WholeGrip/src/HandInput.cs" />
+    <Compile Include="../WholeGrip/src/Assignment.cs" />
+  </ItemGroup>
+</Project>
