@@ -1,6 +1,6 @@
 # Inspection record
 
-Inspected on 2026-11-15. Only HalfGripWholeGrip was changed. Other repositories were read-only; the compile checker builds an isolated loader copy under this repository's ignored `work/` folder.
+Inspected on 2026-11-15. Version 0.1.1 removes all prototype hotkeys and mode switches; menu use and ordinary clicks assign the hands automatically. Only HalfGripWholeGrip was changed. Other repositories were read-only; the compile checker builds an isolated loader copy under this repository's ignored `work/` folder.
 
 ## Evidence and versions
 

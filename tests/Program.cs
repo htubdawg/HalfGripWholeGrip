@@ -81,6 +81,36 @@ internal static class Program
         writer.GetAwaiter().GetResult();
         foreach (var device in Take(queue).Values) total += device.X;
         Check(total == 4000, "Concurrent snapshot lost or replayed movement");
-        Console.WriteLine("PASS: production MouseFrames transition, isolation, overflow, clear and concurrency checks (" + assertions + " assertions).");
+        Dictionary<string, DeviceFrame> Clicks(params string[] devices)
+        {
+            var input = new MouseFrames();
+            foreach (string device in devices) input.Enqueue(new MousePacket(device, 0, 0, 3));
+            return Take(input);
+        }
+        var connected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "A", "B", "C" };
+        bool Connected(string path) => path != null && connected.Contains(path);
+        var assignment = new MouseAssignment { Right = "stale", Left = "B" };
+        assignment.ObserveMenu(Clicks("C", "A"));
+        assignment.EnterGameplay(Connected);
+        Check(assignment.Right == "A" && assignment.Left == "B", "Menu mouse did not override stale right assignment");
+        assignment.Left = "";
+        assignment.ObserveGameplay(Clicks("A"), Connected);
+        Check(assignment.Left == "", "Same mouse assigned to both hands");
+        assignment.ObserveGameplay(Clicks("B"), Connected);
+        Check(assignment.Right == "A" && assignment.Left == "B", "Ordinary second-mouse click did not assign left");
+        assignment.ObserveGameplay(Clicks("C"), Connected);
+        Check(assignment.Right == "A" && assignment.Left == "B", "Third device stole an assigned hand");
+        connected.Remove("B");
+        assignment.ObserveGameplay(Clicks("C"), Connected);
+        Check(assignment.Right == "A" && assignment.Left == "C", "Replacement mouse changed the unaffected hand");
+        var fresh = new MouseAssignment();
+        connected.Add("B");
+        fresh.ObserveGameplay(Clicks("B", "A"), Connected);
+        Check(fresh.Right == "B" && fresh.Left == "A", "No-menu fallback lost ordered same-frame assignments");
+        fresh.Left = "B";
+        fresh.MenuMouse = "B";
+        fresh.EnterGameplay(Connected);
+        Check(fresh.Right != fresh.Left, "Menu selection left duplicate device ownership");
+        Console.WriteLine("PASS: production input, automatic assignment, native layout and concurrency checks (" + assertions + " assertions).");
     }
 }

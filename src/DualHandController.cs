@@ -23,35 +23,35 @@ namespace WholeGrip
         private readonly Dictionary<SpriteRenderer, bool> originalRenderers = new Dictionary<SpriteRenderer, bool>();
         private ModContext context;
         private RawMouseInput raw;
-        private ConfigEntry<bool> enabledSetting, diagnostic;
+        private readonly MouseAssignment assignment = new MouseAssignment();
+        private bool faulted;
         private ConfigEntry<float> rightSensitivity, leftSensitivity;
         private ConfigEntry<string> rightDevice, leftDevice;
         private GameObject secondary;
-        private bool captured, stopped, runningLast, assignment, originalLock;
+        private bool captured, stopped, runningLast, originalLock;
         private CursorLockMode savedCursorLock;
         private bool savedCursorVisible;
-        private int assignmentStage, frameNumber = -1;
+        private int frameNumber = -1;
         private float nextRefresh;
-        private string status = "Starting", menuPrimary;
+        private string status = "Starting";
         internal bool Invoking { get; private set; }
         internal HandState ActiveHand { get; private set; }
         internal bool CapturingGameplay => captured;
-        internal bool CanRun => captured && enabledSetting.Value && Application.isFocused && !GameInput.Muted &&
+        internal bool CanRun => captured && !faulted && Application.isFocused && !GameInput.Muted &&
             !InteriorMath.Paused && Time.timeScale > 0 && !GameManager.raceOver && right.Grabber &&
             right.Grabber.isActiveAndEnabled && right.Grabber.viewCamera && right.Grabber.viewCamera.isActiveAndEnabled;
 
         internal void Initialize(ModContext ctx)
         {
             context = ctx; Instance = this;
-            enabledSetting = ctx.Config.Bind("General", "Enabled", true, "F7 toggles the prototype. Menus retain normal input.");
-            diagnostic = ctx.Config.Bind("General", "DiagnosticOnly", true, "F9 toggles diagnostic cursors versus vanilla wheel/shifter interaction.");
             rightSensitivity = ctx.Config.Bind("Hands", "RightSensitivity", 1f, "Raw counts multiplier, also scaled by game hand sensitivity.");
             leftSensitivity = ctx.Config.Bind("Hands", "LeftSensitivity", 1f, "Raw counts multiplier, also scaled by game hand sensitivity.");
-            rightDevice = ctx.Config.Bind("Devices", "Right", "", "Stable Raw Input device path. Inferred from menu use when empty. F8 assigns the missing hand; Shift+F8 reassigns both.");
-            leftDevice = ctx.Config.Bind("Devices", "Left", "", "Stable Raw Input device path for left hand, never a transient Windows handle.");
+            rightDevice = ctx.Config.Bind("Devices", "Right", "", "Device path for the right hand. Menu mouse use selects this automatically.");
+            leftDevice = ctx.Config.Bind("Devices", "Left", "", "Device path for the left hand. A click from a different mouse assigns it automatically.");
             right.Device = rightDevice.Value; left.Device = leftDevice.Value;
             if (string.Equals(right.Device, left.Device, StringComparison.OrdinalIgnoreCase)) left.Device = "";
-            status = "Menu mouse will become R; F8 assigns a missing hand; Shift+F8 reassigns both";
+            assignment.Right = right.Device; assignment.Left = left.Device;
+            status = "Use your usual mouse in the menu, then click the other mouse in the cockpit";
         }
 
         private bool IsMenu => SceneManager.GetActiveScene().name == "SCENE_UI_MAIN_MENU" ||
@@ -63,26 +63,25 @@ namespace WholeGrip
             frameNumber = Time.frameCount;
             try
             {
-                if (Input.GetKeyDown(KeyCode.F7))
-                {
-                    enabledSetting.Value = !enabledSetting.Value;
-                    if (!enabledSetting.Value) { StopCapture(); Detach(); }
-                }
-                if (!enabledSetting.Value) return;
+                if (faulted) return;
                 if (!Application.isFocused) { Suspend(); return; }
                 if (raw == null && Time.unscaledTime >= nextRefresh)
                 {
                     nextRefresh = Time.unscaledTime + 2f;
                     raw = new RawMouseInput(frames, context.Log.LogInfo);
                     try { raw.Attach(); }
-                    catch { Detach(); throw; }
+                    catch (Exception e)
+                    {
+                        Detach(); status = "Input unavailable: " + e.Message;
+                        context.Log.LogWarning(status); return;
+                    }
                 }
                 if (raw == null) return;
                 if (!raw.Healthy)
                 {
                     status = raw.Status; StopCapture(); Detach();
-                    enabledSetting.Value = false;
-                    context.Log.LogError(status + "; Whole Grip disabled. F7 retries."); return;
+                    nextRefresh = Time.unscaledTime + 2f;
+                    context.Log.LogWarning(status + "; retrying automatically"); return;
                 }
                 if (Time.unscaledTime >= nextRefresh)
                 {
@@ -91,19 +90,8 @@ namespace WholeGrip
                     if (!raw.Healthy) { Suspend(); return; }
                     foreach (var hand in Hands())
                         if (!string.IsNullOrEmpty(hand.Device) && !raw.Connected(hand.Device))
-                        { Release(hand); hand.Rearmed = false; status = hand.Name + " disconnected; reconnect or F8 to reassign"; }
+                        { Release(hand); hand.Rearmed = false; status = hand.Name + " disconnected; reconnect or click a replacement mouse"; }
                 }
-                if (Input.GetKeyDown(KeyCode.F8))
-                {
-                    Suspend();
-                    bool all = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                    assignment = true;
-                    assignmentStage = all || string.IsNullOrEmpty(right.Device) || !raw.Connected(right.Device) ? 0 : 1;
-                    if (assignmentStage == 0) { right.Device = ""; left.Device = ""; }
-                    else left.Device = "";
-                    status = assignmentStage == 0 ? "Click the RIGHT-hand mouse" : "Click the LEFT-hand mouse (a different device)";
-                }
-                if (Input.GetKeyDown(KeyCode.F9)) { Suspend(); diagnostic.Value = !diagnostic.Value; }
                 bool menu = IsMenu;
                 if (menu && captured) StopCapture();
                 if (!menu && !captured) TryCapture();
@@ -114,23 +102,18 @@ namespace WholeGrip
                 raw.AcceptInput = menu || running;
                 var snapshot = frames.Snapshot(out bool lost);
                 if (lost) { Suspend(); status = "Raw Input queue overflow: holds cleared; release both buttons"; return; }
-                if (menu && !assignment && string.IsNullOrEmpty(right.Device))
-                {
-                    int latest = 0;
-                    foreach (var pair in snapshot)
-                        if (pair.Value.PrimaryDownOrder > latest)
-                        { latest = pair.Value.PrimaryDownOrder; menuPrimary = pair.Key; }
-                }
-                if (assignment) ProcessAssignment(snapshot);
+                if (menu) assignment.ObserveMenu(snapshot);
                 if (!running) return;
-                if (assignment) return;
+                assignment.ObserveGameplay(snapshot, raw.Connected);
+                ApplyAssignment(right, assignment.Right, rightDevice);
+                ApplyAssignment(left, assignment.Left, leftDevice);
                 foreach (var hand in Hands()) Tick(hand, snapshot);
             }
             catch (Exception e)
             {
                 status = "Whole Grip stopped: " + (e.InnerException ?? e).Message;
                 context.Log.LogError(status);
-                StopCapture(); Detach(); enabledSetting.Value = false;
+                StopCapture(); Detach(); faulted = true;
             }
         }
 
@@ -150,12 +133,9 @@ namespace WholeGrip
             foreach (var shifter in Object.FindObjectsByType<NShifter>(FindObjectsSortMode.None))
                 if (shifter.isActiveAndEnabled && shifter.gate && shifter.gameObject.scene == original.gameObject.scene) allowed.Add(shifter.gate);
             if (allowed.Count == 0) { right.Grabber = null; return; }
-            if (string.IsNullOrEmpty(right.Device) && !string.IsNullOrEmpty(menuPrimary) && raw.Connected(menuPrimary))
-            {
-                right.Device = menuPrimary; rightDevice.Value = menuPrimary;
-                if (string.Equals(left.Device, menuPrimary, StringComparison.OrdinalIgnoreCase)) { left.Device = ""; leftDevice.Value = ""; }
-                context.Log.LogInfo("Assigned RIGHT hand from observed menu mouse use.");
-            }
+            assignment.EnterGameplay(raw.Connected);
+            ApplyAssignment(right, assignment.Right, rightDevice);
+            ApplyAssignment(left, assignment.Left, leftDevice);
             originalLock = original.lockHardwareCursor;
             savedCursorLock = UnityEngine.Cursor.lockState; savedCursorVisible = UnityEngine.Cursor.visible;
             secondary = new GameObject("WholeGrip left hand");
@@ -172,29 +152,18 @@ namespace WholeGrip
             HideIndicators(original); HideIndicators(left.Grabber);
             UnityEngine.Cursor.lockState = CursorLockMode.Locked; UnityEngine.Cursor.visible = false;
             frames.Clear(); right.Rearmed = left.Rearmed = false;
-            status = string.IsNullOrEmpty(right.Device) ? "F8: assign right mouse, then left mouse" :
-                string.IsNullOrEmpty(left.Device) ? "Menu mouse assigned to R. F8: click the LEFT mouse" : "Two mice assigned";
-            context.Log.LogInfo("Captured vanilla wheel/shifter. DiagnosticOnly=" + diagnostic.Value + "; F9 toggles interaction.");
+            status = "Active — steer with one mouse and shift with the other";
+            context.Log.LogInfo("Captured vanilla wheel/shifter; interaction enabled automatically.");
         }
 
-        private void ProcessAssignment(Dictionary<string, DeviceFrame> snapshot)
+        private void ApplyAssignment(HandState hand, string device, ConfigEntry<string> setting)
         {
-            // Choose at most one device per frame; simultaneous setup clicks are deliberately not both accepted.
-            foreach (var pair in snapshot)
-            {
-                if ((pair.Value.Down & 1) == 0) continue;
-                if (assignmentStage == 0)
-                {
-                    right.Device = pair.Key; assignmentStage = 1;
-                    status = "RIGHT assigned. Release it, then click a DIFFERENT mouse for LEFT";
-                    frames.Clear(); return;
-                }
-                if (string.Equals(right.Device, pair.Key, StringComparison.OrdinalIgnoreCase)) continue;
-                left.Device = pair.Key; assignment = false;
-                rightDevice.Value = right.Device; leftDevice.Value = left.Device;
-                Suspend(); status = "Assigned R and L. Release both; F9 toggles diagnostic/play mode";
-                return;
-            }
+            if (string.Equals(hand.Device, device, StringComparison.OrdinalIgnoreCase)) return;
+            Release(hand);
+            hand.Device = device; hand.Rearmed = true; hand.SeenInput = false;
+            hand.Frame = null; hand.Input = default;
+            setting.Value = device;
+            context.Log.LogInfo("Assigned " + hand.Name + " hand automatically.");
         }
 
         private void Tick(HandState hand, Dictionary<string, DeviceFrame> snapshot)
@@ -204,6 +173,7 @@ namespace WholeGrip
             { Release(hand); hand.Rearmed = false; hand.Frame = null; hand.Input = default; return; }
             if (!snapshot.TryGetValue(hand.Device, out var frame)) frame = new DeviceFrame();
             hand.Frame = frame;
+            if (frame.X != 0 || frame.Y != 0 || frame.Down != 0 || frame.Up != 0) hand.SeenInput = true;
             if (!hand.Rearmed)
             {
                 // After suspension/setup do not turn a still-held physical button into a sweep-grab.
@@ -217,8 +187,7 @@ namespace WholeGrip
             foreach (var step in steps)
             {
                 hand.Input = step;
-                if (diagnostic.Value) MoveDiagnostic(hand);
-                else Invoke(hand, Patches.Update);
+                Invoke(hand, Patches.Update);
                 ReconcileOwner(hand);
             }
             // A reconnect can replace a handle between polls without a button-up packet. The
@@ -242,7 +211,7 @@ namespace WholeGrip
         internal bool Owns(Grabber grabber) => captured && (grabber == right.Grabber || grabber == left.Grabber);
         internal bool CanInteract(Grabber grabber, bool secondaryAction)
         {
-            if (!CanRun || diagnostic.Value || ActiveHand == null || ActiveHand.Grabber != grabber) return false;
+            if (!CanRun || ActiveHand == null || ActiveHand.Grabber != grabber) return false;
             Grabbable target = secondaryAction && grabber.Held ? grabber.Held :
                 grabber.Hovered ? grabber.Hovered.GetComponentInParent<Grabbable>() : null;
             if (!target || !allowed.Contains(target) || target.grabRedirect != null) return false;
@@ -256,7 +225,6 @@ namespace WholeGrip
             if (!free) grabber.cursor = grabber.viewCamera.WorldToScreenPoint(grabber.Held.PlaneToWorld((Vector2)Patches.RawPoint.GetValue(grabber)));
             AddDelta(ActiveHand, free);
         }
-        private void MoveDiagnostic(HandState hand) { AddDelta(hand, true); }
         private void AddDelta(HandState hand, bool clamp)
         {
             var grabber = hand.Grabber;
@@ -276,7 +244,7 @@ namespace WholeGrip
         private void LateUpdate()
         {
             if (stopped || !captured) return;
-            if (!CanRun || assignment || diagnostic.Value)
+            if (!CanRun)
             { HideIndicators(right.Grabber); HideIndicators(left.Grabber); return; }
             try
             {
@@ -285,7 +253,7 @@ namespace WholeGrip
                     else HideIndicators(hand.Grabber);
             }
             catch (Exception e)
-            { context.Log.LogError(e); StopCapture(); Detach(); enabledSetting.Value = false; }
+            { status = "Stopped: " + (e.InnerException ?? e).Message; context.Log.LogError(e); StopCapture(); Detach(); faulted = true; }
         }
 
         internal void Suspend()
@@ -391,27 +359,20 @@ namespace WholeGrip
             sprite.flipX = !source.flipX; sprite.flipY = source.flipY; sprite.enabled = false;
             return sprite;
         }
+        private string HandStatus(HandState hand)
+        {
+            if (raw == null || !raw.Connected(hand.Device))
+                return hand.Name + ": click " + (hand == right ? "your usual mouse" : "the other mouse");
+            if (hand.Grabber && hand.Grabber.Held) return hand.Name + ": " + hand.Grabber.Held.name;
+            return hand.Name + (hand.SeenInput ? ": receiving input" : ": move mouse to check input");
+        }
         private void OnGUI()
         {
-            if (stopped || context == null || !enabledSetting.Value || !captured || !Application.isFocused) return;
+            if (stopped || context == null || !Application.isFocused) return;
             Color previous = GUI.color;
-            GUI.color = Color.white;
-            GUI.Label(new Rect(12, 12, Screen.width - 24, 25), "Whole Grip | F7 off | F8 assign | Shift+F8 reassign both | F9 " + (diagnostic.Value ? "play" : "diagnostic"));
-            GUI.Label(new Rect(12, 36, Screen.width - 24, 25), status);
-            int row = 0;
-            foreach (var hand in Hands())
-            {
-                GUI.color = hand.Color;
-                var f = hand.Frame;
-                GUI.Label(new Rect(12, 62 + row++ * 24, Screen.width - 24, 24), hand.Name +
-                    " buttons=" + (f == null ? "0" : f.Held.ToString()) + " down=" + (f == null ? "0" : f.Down.ToString()) +
-                    " up=" + (f == null ? "0" : f.Up.ToString()) + " held=" + (hand.Grabber && hand.Grabber.Held ? hand.Grabber.Held.name : "none"));
-                if (CanRun && hand.Grabber)
-                {
-                    var position = hand.Grabber.cursor;
-                    GUI.Label(new Rect(position.x - 8, Screen.height - position.y - 12, 50, 28), "+ " + hand.Name);
-                }
-            }
+            GUI.color = faulted || raw == null ? new Color(1f, 0.65f, 0.3f) : Color.white;
+            string message = captured && !faulted ? HandStatus(right) + " | " + HandStatus(left) : status;
+            GUI.Label(new Rect(12, 12, Screen.width - 24, 28), "Whole Grip: " + message);
             GUI.color = previous;
         }
     }

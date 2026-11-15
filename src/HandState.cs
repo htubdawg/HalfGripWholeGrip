@@ -10,7 +10,7 @@ namespace WholeGrip
         public string Device;
         public MouseStep Input;
         public DeviceFrame Frame;
-        public bool Rearmed;
+        public bool Rearmed, SeenInput;
         public HandState(string name, Color color) { Name = name; Color = color; }
     }
 }

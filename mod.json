@@ -1,9 +1,9 @@
 {
   "id": "wholegrip",
   "name": "Whole Grip (prototype)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "htubdawg",
-  "description": "Two physical mice, two independent vanilla cockpit hands. Windows prototype; assign right hand first with F8.",
+  "description": "Two physical mice, two independent vanilla cockpit hands. Automatic menu-mouse assignment; no hotkeys or setup modes.",
   "requires": [],
   "gameVersion": "0.419",
   "tools": "1.0.6"

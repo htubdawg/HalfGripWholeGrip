@@ -3,5 +3,5 @@
     <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
     <LangVersion>10</LangVersion><ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
-  <ItemGroup><Compile Include="../src/MouseFrames.cs" Link="MouseFrames.cs" /><Compile Include="../src/RawMouseInput.cs" Link="RawMouseInput.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../src/MouseFrames.cs" Link="MouseFrames.cs" /><Compile Include="../src/RawMouseInput.cs" Link="RawMouseInput.cs" /><Compile Include="../src/MouseAssignment.cs" Link="MouseAssignment.cs" /></ItemGroup>
 </Project>
