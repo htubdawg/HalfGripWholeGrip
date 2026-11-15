@@ -33,8 +33,10 @@ namespace WholeGrip
 	/// and a release the next.
 	/// </para>
 	/// <para>
-	/// The physical button state that Windows keeps for all mice together (GetAsyncKeyState) is the safety net: if it says no
-	/// mouse holds the button while this hand still does, a release was lost somewhere, and the hand lets go.
+	/// The physical button state that Windows keeps (GetAsyncKeyState) is shared by all mice and is not a count: any mouse's
+	/// release clears it even while the other mouse still holds. So it says nothing about this hand once its own packets do, and
+	/// is only a safety net for a hold this hand guessed at a <see cref="Resync"/> (no packet seen for it since): if Windows says
+	/// up there, the hand lets go instead of staying stuck with no release to come.
 	/// </para>
 	/// </summary>
 	internal sealed class HandInput
@@ -47,6 +49,8 @@ namespace WholeGrip
 
 		private readonly Queue<bool>[] queued = { new Queue<bool>(), new Queue<bool>() };
 		private readonly bool[] reported = new bool[ButtonCount];
+		/// <summary>Held only because <see cref="Resync"/> said so: no packet of this hand has shown this button since.</summary>
+		private readonly bool[] guessed = new bool[ButtonCount];
 		private readonly bool[] held = new bool[ButtonCount], down = new bool[ButtonCount], up = new bool[ButtonCount];
 		private long pendingX, pendingY;
 
@@ -72,6 +76,7 @@ namespace WholeGrip
 			{
 				bool pressed = (packet.Buttons & (1 << (button * 2))) != 0;
 				bool released = (packet.Buttons & (2 << (button * 2))) != 0;
+				if (pressed || released) guessed[button] = false;
 				// A packet can carry both: a press and release reported together are a whole click, in that order.
 				if (pressed)
 				{
@@ -90,7 +95,7 @@ namespace WholeGrip
 
 		/// <summary>
 		/// Starts a frame: takes this frame's movement and at most one transition per button.
-		/// <paramref name="physicallyHeld"/>[b] is Windows' own state of button b over all mice.
+		/// <paramref name="physicallyHeld"/>[b] is Windows' own state of button b over all mice, used only for guessed holds.
 		/// </summary>
 		public void BeginFrame(bool[] physicallyHeld)
 		{
@@ -106,18 +111,18 @@ namespace WholeGrip
 					if (press && !held[button]) { held[button] = true; down[button] = true; }
 					else if (!press && held[button]) { held[button] = false; up[button] = true; }
 				}
-				else if (held[button] && physicallyHeld != null && button < physicallyHeld.Length && !physicallyHeld[button])
+				else if (held[button] && guessed[button] && physicallyHeld != null && button < physicallyHeld.Length && !physicallyHeld[button])
 				{
-					// No mouse holds the button and nothing is queued: a release never arrived.
-					held[button] = false; up[button] = true; reported[button] = false;
+					// A hold guessed at Resync, and Windows says the button is up: the release came while the mice were Unity's.
+					held[button] = false; up[button] = true; reported[button] = false; guessed[button] = false;
 				}
 			}
 		}
 
 		/// <summary>
 		/// Forgets queued input and starts again from what the game shows: <paramref name="holding"/> is whether this hand's grabber
-		/// holds something now. A hand that holds something is taken to have its button down, so it lets go through the normal path
-		/// (a release, or the physical-state check the next frame) instead of being stuck with no release to come.
+		/// holds something now. A hand that holds something is taken to have its button down (a guess), so it lets go through the
+		/// normal path (a release, or the physical-state check while the guess stands) instead of being stuck with no release to come.
 		/// </summary>
 		public void Resync(bool holding)
 		{
@@ -126,6 +131,7 @@ namespace WholeGrip
 				queued[button].Clear();
 				held[button] = button == 0 && holding;
 				reported[button] = held[button];
+				guessed[button] = held[button];
 				down[button] = up[button] = false;
 			}
 			pendingX = pendingY = 0;

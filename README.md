@@ -1,6 +1,6 @@
 # Whole Grip
 
-**Version 0.3.0** for Half Grip 0.419, a [HalfGripTools](https://github.com/4l3x4nd3r0/HalfGripTools) mod (1.0.6 or newer).
+**Version 0.3.1** for Half Grip 0.419, a [HalfGripTools](https://github.com/4l3x4nd3r0/HalfGripTools) mod (1.0.6 or newer).
 
 Two mice, two hands. Plug a second mouse into your PC and the cockpit gets a left hand of its own: keep one hand on the wheel
 while the other works the shifter, and let go of either without touching the other. Windows only.

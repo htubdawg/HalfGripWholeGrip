@@ -70,15 +70,31 @@ internal static class Program
 		hand.BeginFrame(Up);
 		Check(hand.Up(0) && !hand.Held(0), "release after a long hold");
 
-		// A release that never arrived: no mouse holds the button (physical state) and nothing is queued, so the hand lets go.
+		// The owner's 0.3.0 report: both mice hold, one lets go. Windows' button state is shared and not a count, so the one
+		// release makes it say up for both; the hand that still holds must keep holding until its own release.
+		var holdA = new HandInput();
+		var holdB = new HandInput();
+		holdA.Add(Buttons(LDown)); holdB.Add(Buttons(LDown));
+		holdA.BeginFrame(LeftDown); holdB.BeginFrame(LeftDown);
+		holdA.Add(Buttons(LUp));
+		holdA.BeginFrame(Up); holdB.BeginFrame(Up);
+		Check(holdA.Up(0) && !holdA.Held(0), "both hold, A releases: A lets go");
+		Check(holdB.Held(0) && !holdB.Up(0), "both hold, A releases: B keeps holding although Windows says up");
+		for (int frame = 0; frame < 30; frame++) holdB.BeginFrame(Up);
+		Check(holdB.Held(0), "both hold, A releases: B still holds frames later");
+		holdB.Add(Buttons(LUp));
+		holdB.BeginFrame(Up);
+		Check(holdB.Up(0) && !holdB.Held(0), "both hold: B lets go on its own release");
+
+		// A hold guessed at Resync stops being a guess once this hand's packets show the button: Windows' state no longer counts.
 		hand = new HandInput();
-		hand.Add(Buttons(LDown));
+		hand.Resync(true);
+		hand.Add(Buttons(LDown)); // the "lost release" path puts back a release, then the press
 		hand.BeginFrame(LeftDown);
+		hand.BeginFrame(LeftDown);
+		Check(hand.Held(0), "guess replaced by a seen press: held");
 		hand.BeginFrame(Up);
-		Check(hand.Up(0) && !hand.Held(0), "lost release: physical state lets go");
-		hand.Add(Buttons(LUp)); // the late release, if it shows up after all, does nothing
-		hand.BeginFrame(Up);
-		Check(!hand.Up(0) && !hand.Down(0) && !hand.Held(0), "late release after the safety net: ignored");
+		Check(hand.Held(0) && !hand.Up(0), "seen press: Windows saying up does not let go");
 
 		// The other mouse holding the button keeps the physical state down: no early release.
 		hand = new HandInput();

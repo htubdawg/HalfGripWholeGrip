@@ -25,7 +25,7 @@ learned the hard way (*Game and Windows facts*, *Owner's wishes*). A fresh sessi
 |---|---|
 | `Mod.cs` | Platform check, `Patches.Missing()` check, the persistent `Hands` object, patches (all or none), scene and unload hooks |
 | `RawMice.cs` | Input thread with a message-only window. `Take()` registers it for mouse raw input (`RIDEV_INPUTSINK|DEVNOTIFY`), keeping Unity's registration; `GiveBack()` (main thread) restores it. Reads every `WM_INPUT` into a locked list; `Drain()` once a frame. A 250 ms timer re-takes if Unity re-registers (gives up after 8). Device list/paths, `GetAsyncKeyState`, `SM_SWAPBUTTON` |
-| `HandInput.cs` | Pure (no Unity; `tests/` runs it as shipped). One hand's packets → one frame of legacy-style button state: transitions queued per button, **one per frame** (a click between frames = press, then release next frame); lost releases put back; queue capped at 6 (whole clicks dropped from the middle); **physical-state safety net**: held + nothing queued + Windows says no mouse holds the button → release |
+| `HandInput.cs` | Pure (no Unity; `tests/` runs it as shipped). One hand's packets → one frame of legacy-style button state: transitions queued per button, **one per frame** (a click between frames = press, then release next frame); lost releases put back; queue capped at 6 (whole clicks dropped from the middle); **physical-state safety net only for guessed holds**: held since `Resync` with no packet of this hand for that button since + nothing queued + Windows says up → release. Never for holds seen in packets (see facts) |
 | `Assignment.cs` | Pure. Device path → side. No right hand: any mouse but the left moves it, first click takes it. Then the first other mouse to click takes the left. Unplugged hand = free for the next click |
 | `Hands.cs` | The MonoBehaviour. Decides when to drive (`Wanted()`), takes/gives back the mice, routes packets (`EnsureFrame`, lazily once a frame from whichever entry comes first: no execution-order dependence), builds the left hand, runs its `Update`/`LateUpdate` by reflection, `MoveCursor` (the game's `UpdateCursor` with per-hand deltas), `MayUse` (ownership, left-hand allowlist), hints via `OnGUI` |
 | `Patches.cs` | Harmony, installed transactionally: `Grabber.Update` prefix+finalizer (sets `Hands.Scoped`), `Grabber.UpdateCursor` prefix, `TryInteract`/`DispatchRightClick` prefixes (MayUse), `GameInput.GetKey/GetKeyDown/GetKeyUp(KeyCode)` and `GetMouseButton/Down/Up(int)` prefixes answering buttons 0/1 from the hand's `HandInput`. Everything passes through when not driving |
@@ -65,6 +65,9 @@ learned the hard way (*Game and Windows facts*, *Owner's wishes*). A fresh sessi
   main thread: seen in the owner's 0.2.0 log) and drains packets with `GetRawInputBuffer`, which bypasses `WH_GETMESSAGE` hooks.
   0.2.0 hooked the queue and logged ~100-135 packets/s with both mice moving (two mice give 250-2000/s): most were lost,
   which inverted button states (stuck holds, presses read as releases). Hence the take-over while driving.
+- **`GetAsyncKeyState` is one state for all mice, not a count**: any mouse's button-up clears it while another mouse still
+  holds. 0.3.0 used it as a safety net for every hold, so releasing one mouse released both hands (owner's report). It says
+  nothing about a hand whose own packets showed the button; 0.3.1 uses it only for holds guessed at `Resync`.
 - Raw mouse button flags and `GetAsyncKeyState(VK_LBUTTON)` are **physical**; the game's Mouse0 is the logical primary. With
   `SM_SWAPBUTTON` on, `Hands.EnsureFrame` swaps left/right before use.
 - `hDevice` is 0 for injected input (SendInput, remote desktop): ignored. Absolute packets (tablets, touch): buttons only.
@@ -73,6 +76,7 @@ learned the hard way (*Game and Windows facts*, *Owner's wishes*). A fresh sessi
 
 ## Owner's wishes
 
+- Author credit: `Claude - Codex - Oretsej` (owner, 2026-11-15).
 - Two physical mice, two independent cockpit hands; wheel in one, shifter in the other. No hotkeys or modes (Codex 0.1.1 removed
   them after they clashed with other mods' keys).
 - 0.2.0 report (log + words, 2026-11-15): "sort of works but its very jittery and misses a lot of inputs. Click releases almost
@@ -110,17 +114,21 @@ Repos side by side: `HalfGripRefs` (`/home/user/HalfGripRefs`), HalfGripTools (c
   menus don't take the mice). Repo moved to the jMods layout (`WholeGrip/` folder, icon, README, this file, `tools/check.sh`,
   `tests/`); Codex's `docs/` folded in here. Checked: `tools/check.sh` (0 warnings, all tests pass) against HalfGripRefs 0.419
   and HalfGripTools 1.0.6 built from source. **Untested in game: all of it.**
+- **0.3.1** (branch `claude/vibrant-mendel-fshbj5`, on top of 0.3.0's branch): owner's 0.3.0 test: "works much better", but
+  holding both buttons and releasing one released both. Cause: the `GetAsyncKeyState` safety net (shared state, see facts).
+  Fix: net only for holds guessed at `Resync`. Tests: the owner's case (both hold, one lets go), seen press ignores Windows' up;
+  a mutation (net for every hold) fails 4 checks. Author set to `Claude - Codex - Oretsej` (owner's wish). `tools/check.sh` passes.
 - **Owner to test** (with `Debug.VerboseLog=true`): both hands holding wheel+shifter while moving both mice fast; rapid clicks;
   releasing either while the other moves; pause/unpause while holding; alt-tab; outside camera; a scene change; a gun in the
   right hand while the left steers; SlapPack parts with the right hand. Send the log.
 - **Open questions:** does Unity re-register mice during a race (log `keeps taking the mice back`)? Is Unity's mouse back in the
   menus after every give-back (it should be: same window and flags restored)? Should the left hand be allowed more parts?
 - **PR:** [htubdawg/HalfGripWholeGrip#2](https://github.com/htubdawg/HalfGripWholeGrip/pull/2) (`claude/jolly-ritchie-e6wh7t` → `main`),
-  open. Before pushing more to that branch, check it is still open; if merged, start a new branch from `main`.
-- **Told the owner, awaiting answers:** author credit set to `Codex & Claude - Oretsej` (Codex had inferred `htubdawg` from the repo
-  owner; change if the owner wants); asked whether to watch the PR (no answer yet). Owner asked about SlapPack's Grabber patches;
+  open. Before pushing more to that branch, check it is still open; if merged, start a new branch from `main`. 0.3.1 is on
+  `claude/vibrant-mendel-fshbj5` (0.3.0 + the fix), no PR of its own yet: owner to say whether to open one or fold it into #2.
+- **Told the owner, awaiting answers:** asked whether to watch the PR (no answer yet). Owner asked about SlapPack's Grabber patches;
   answered (see *Game and Windows facts*): harmless to other mods, the transpiler is justified, only 0.2.0's Update replacement broke them.
 - **Session notes:** HalfGripTools built from source this session (clone to `/home/user/htubdawg/HalfGripTools`); jMods is
   read-only from here (public clone only), so its README/table can't be edited from this repo's sessions without push access.
-- **Next step:** owner merges the PR and tests in game, sends `LogOutput.log` (VerboseLog on); fix from the log. After a release,
+- **Next step:** owner tests 0.3.1 (release one of two held buttons; the other must keep holding) and merges, sends `LogOutput.log` (VerboseLog on); fix from the log. After a release,
   list Whole Grip in jMods (README section + CLAUDE.md table + sync workflow entry).
